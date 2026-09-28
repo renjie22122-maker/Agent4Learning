@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# lab 运行产物（checkpoint / 临时状态文件）
+.lab_state/
+*.tmp
+
+# ★ 真实 LLM 凭据 —— 绝不能提交
+.agentlab_llm.json
+.agentlab_llm.json.*
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+.agent-runtime/
+
+# Private local state and generated user content
+.agentlab_workspaces.json
+.sessions/
+.diagnostics/
+.spill/
+workspace/
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+*.sqlite3
+*.sqlite3-*
+*.log
