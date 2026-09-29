@@ -9,7 +9,7 @@
 ## 一、项目自检（自动化）
 
 ```bash
-python verify.py                     # 全部 18 个 lab
+python verify.py                     # 51 个默认 lab；可选 ANN / Windows 实验需显式开启
 python verify.py lab-06 lab-08       # 指定 lab
 python verify.py --list              # 列出所有 lab 与运行命令
 python verify.py --jobs 1 --show-fail  # 串行跑并打印失败详情（排查用）

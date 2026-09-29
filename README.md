@@ -6,11 +6,11 @@
 崩一次、打印出崩溃时的指标，再给出工程修复，最后用同一份负载跑对照组验证修复确实有效。
 实验指标来自固定负载与模拟模型，不能视为真实模型质量或生产认证。真实模型评估另行运行。
 
-本轮运行时升级、配置、能力边界与验证方法见 [运行时升级说明](docs/RUNTIME-UPGRADE.md)。
-新增的技能导入见 [Skill 使用说明](docs/SKILLS.md)，本轮已验证功能和剩余差距见 [runtime-5](docs/RUNTIME-5.md)。
-模型容量自动识别、API 用量、价格、SSE 和独立验收升级见 [runtime-6](docs/RUNTIME-6.md)。
-递归子 Agent、团队通信与选择会话的长期记忆见 [runtime-8](docs/RUNTIME-8.md)。
-支持 Windows 原生文件隔离，Docker 与 MCP 均可选。配置及实测限制见 [原生沙箱](docs/NATIVE-SANDBOX.md)。真实 Agent 的文档导入、分块索引、检索与图片 OCR 见 [知识库使用说明](docs/KNOWLEDGE.md)。
+当前使用入口、实现范围和验证边界见 [当前项目说明](docs/CURRENT.md)。
+按功能查看：[技能导入](docs/SKILLS.md)、[文档知识库](docs/KNOWLEDGE.md)、
+[知识库范围选择](docs/KNOWLEDGE-SCOPES.md)、[宿主执行与权限恢复](docs/PERMISSION-RECOVERY.md)、
+[交互时间线](docs/CHAT-TIMELINE.md)、[Windows 原生沙箱](docs/NATIVE-SANDBOX.md)。
+Docker 与 MCP 均可选；宿主已安装的依赖不等于原生沙箱内可用。
 
 ```bash
 # 核心教学实验使用 Python 3.11+ 标准库；可选集成另需依赖
@@ -20,9 +20,10 @@ python -m agentplat.run          # 跑完整平台的多租户压测 + SLO 合�
 ```
 
 启动本机网页界面：`python tools/start_desktop.py`，再在设置页面配置自己的模型 API。
-最新功能与验证边界见 [runtime-17 验证说明](docs/RUNTIME17_VALIDATION.md)、
-[聊天内确认](docs/HUMAN_INTERACTION_DESIGN.md) 和 [本地混合检索](docs/RAG_HYBRID.md)。
-验收等待、来源快照与联网修复见 [runtime-18 验证说明](docs/RUNTIME18_VALIDATION.md)。
+聊天内等待确认见 [交互说明](docs/HUMAN_INTERACTION_DESIGN.md)，
+embedding 与检索配置见 [本地混合检索](docs/RAG_HYBRID.md)。
+`RUNTIME*`、带日期的评测和自评文档记录对应阶段的实现或实验，不能作为当前功能全集；
+查阅顺序和历史入口见 [当前项目说明](docs/CURRENT.md)。
 
 公开仓库仅包含源码、实验、测试工具和说明，不包含 API 凭据、聊天记录、附件、
 长期记忆、知识库、本地模型、用户工作区及原始运行日志。文档中的历史实测数据是
@@ -105,7 +106,7 @@ agentlab/            零依赖核心 harness（冻结契约，见 docs/CONTRACT.
   orchestration.py   Deadline / CircuitBreaker / Bulkhead / Retry / TokenBucket
   clock.py           RealClock / VirtualClock（把逻辑演示压缩到毫秒）
 
-labs/                37 个默认实验，另有 3 个 Windows 原生实验
+labs/                51 个默认实验，另有 1 个可选 ANN、3 个 Windows 原生实验
 agentplat/           Capstone：运行内核、原生隔离、真实文档知识库与压测平台
   config.py          所有旋钮集中一处，每项标注来源 lab
   context.py         多租户隔离 + 会话治理 + 上下文压缩

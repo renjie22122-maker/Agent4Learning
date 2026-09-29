@@ -64,7 +64,8 @@ class HardeningTests(unittest.TestCase):
         env=task_environment({'PATH':'safe','SystemRoot':'windows','DEEPSEEK_API_KEY':'secret',
                               'AWS_SECRET_ACCESS_KEY':'secret','PYTHONPATH':'hook','USERPROFILE':'private'})
         self.assertEqual(env['PATH'],'safe')
-        for key in ('DEEPSEEK_API_KEY','AWS_SECRET_ACCESS_KEY','PYTHONPATH','USERPROFILE'):self.assertNotIn(key,env)
+        for key in ('DEEPSEEK_API_KEY','AWS_SECRET_ACCESS_KEY','PYTHONPATH'):self.assertNotIn(key,env)
+        self.assertEqual(env['USERPROFILE'],'private')
         self.assertEqual(env['PYTHONUTF8'],'1')
 
     def test_real_subprocess_receives_filtered_environment(self):

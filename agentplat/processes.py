@@ -70,7 +70,7 @@ class ProcessSupervisor:
         self.tasks = {}
         self.lock = threading.RLock()
 
-    def start(self, command, cwd, *, timeout_s=30, shell=False, env=None, cleanup_command=None, native_workspace=None, native_network='deny'):
+    def start(self, command, cwd, *, timeout_s=30, shell=False, env=None, cleanup_command=None, native_workspace=None, native_network='deny', interactive=True):
         if os.name == 'nt' and (shell or native_workspace is not None):
             from .windows_command import prepare
             command = prepare(command)
@@ -91,7 +91,7 @@ class ProcessSupervisor:
                     proc = NativeProcess(command, native_workspace, cwd, stream, native_network)
                 else:
                     proc = subprocess.Popen(command, cwd=str(cwd), shell=shell,
-                        stdin=subprocess.PIPE, stdout=stream, stderr=stream, env=env,
+                        stdin=subprocess.PIPE if interactive else subprocess.DEVNULL, stdout=stream, stderr=stream, env=env,
                         bufsize=0,
                         start_new_session=os.name != 'nt',
                         creationflags=0x4 if job else 0)
@@ -112,6 +112,10 @@ class ProcessSupervisor:
                         started=time.monotonic(), timeout=timeout_s, status='running',
                         exit_code=None, reason='', done=threading.Event(), cleanup=cleanup_command,
                         input_queue=queue.Queue(maxsize=4), input_writer=False)
+            # Native stdin is constructed by its backend; noninteractive callers
+            # must still deliver EOF rather than leave unattended prompts waiting.
+            if not interactive and proc.stdin:
+                proc.stdin.close()
             self.tasks[task_id] = task
             threading.Thread(target=self._watch, args=(task_id,), daemon=True).start()
             return task_id
@@ -182,6 +186,8 @@ class ProcessSupervisor:
             task = self.tasks[task_id]
             if task['status'] != 'running':
                 raise RuntimeError('进程已结束')
+            if task['proc'].stdin is None or task['proc'].stdin.closed:
+                raise RuntimeError('此命令为非交互执行，标准输入已关闭')
             task['input_queue'].put_nowait(text.encode('utf-8'))
             if not task['input_writer']:
                 task['input_writer'] = True

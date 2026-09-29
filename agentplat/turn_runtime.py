@@ -68,6 +68,10 @@ class TurnRuntime:
 
         # 让压缩不变量能读到当前的 messages（记账 vs 实际、消息头是否被摘要顶掉）。
         self._last_messages = messages
+        from .execution_environment import describe
+        prefix = '[宿主执行环境]'
+        messages[:] = [m for m in messages if not (m.role=='system' and isinstance(m.content,str) and m.content.startswith(prefix))]
+        messages.insert(1, ChatMessage('system', prefix+json.dumps(describe(self.ws),ensure_ascii=False)))
         # 反射要用任务原文抽需求条目。从 messages 里反推不行 ——
         # 压缩可能已经把那条 user 消息折成摘要了。
         continuing = bool(getattr(self,'_resume_delivery',False)) and not fresh

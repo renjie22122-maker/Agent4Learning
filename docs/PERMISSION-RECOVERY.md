@@ -2,7 +2,7 @@
 
 工具失败仍然保留原始结果。命令缺依赖、执行器不可用、访问被拒时，宿主附加恢复指引；普通代码错误不会建议扩权。超时/中止提示先核实副作用，不自动重试。
 
-`request_execution(command, reason)` 为必要的精确宿主命令展示聊天授权卡，显示原因、命令、工作目录、宿主访问范围和仅允许一次的期限范围。等待期间不轮询模型。明确批准后直接执行并返回结果；拒绝、过期、取消不执行。不修改全局模式或后续命令权限。旧 request_host_command + run_approved_command 接口保留。
+`request_execution(command, reason, timeout_s=60)` 为必要的精确宿主命令展示聊天授权卡，显示原因、命令、工作目录、执行时限、宿主访问范围和仅允许一次的期限范围。等待期间不轮询模型。明确批准后直接执行并返回结果；拒绝、过期、取消不执行。不修改全局模式或后续命令权限。旧 request_host_command + run_approved_command 接口保留。
 
 审批绑定会话、工作目录和精确命令，30 分钟过期、单次使用。执行前再次核对实时权限、工具守卫和取消状态；只读/普通对话不能借此绕过命令限制。拒绝历史查询不再受管理列表最近 100 条限制。对等价但不同写法的命令，目前依赖模型规范，不声称能自动识别所有变体。
 
@@ -12,7 +12,7 @@
 
 `python tools/test_permission_recovery.py`：真实 SQLite 等待/回答、批准后真实执行 Python --version、单次消费、拒绝后不执行/不重复问（超过 100 条历史）、取消、等待期间撤权、只读与普通对话拒绝、超时与代码错误指引。
 
-`python -m unittest tools.test_approvals tools.test_human_workflow tools.test_general_chat -v`：10 项既有回归通过。本轮没有做真实 LLM 的授权选择评测。
+既有审批与普通对话回归可运行 `python -m unittest tools.test_approvals tools.test_human_workflow tools.test_general_chat -v`。真实模型样本及其失败边界见下文，不能用机制测试替代模型行为评测。
 
 
 ## 2026-09-29 真实模型验证
@@ -28,3 +28,30 @@
 - v3 deny：同样明确候选命令，模型正式申请一次，拒绝后零宿主执行，没有再次申请。
 
 等待答复时模型调用数不增长。所有记录位于本机 .diagnostics/permission-recovery-live-v1、v2、v3 和 permission-recovery-live-audit.json。当前结论是机制可跑通，但自然语言条件下的授权工具选择仍有波动；明确候选命令后的通过不能当作初版自然场景全部通过。没有验证大量技能依赖、GUI 点击、多模型稳定性或任意权限升级。
+## 宿主环境与执行结果修复
+
+宿主执行使用正常用户目录和工具链位置变量，同时继续过滤 API 凭据、
+PYTHONPATH/PYTHONHOME 等注入变量。原生沙箱仍由自己的精简运行时和环境构造器启动，
+不会继承宿主 site-packages，也不会因一次审批而永久升级。
+
+每轮模型上下文包含实际普通执行后端、宿主 Python 路径和 shell 类型。
+模型应先检查现有环境，不能根据沙箱缺包或路径错误宣布宿主安装损坏。
+
+非交互宿主命令的 stdin 直接给 EOF；交互进程工具保持原有输入能力。
+宿主命令支持 timeout_s（默认 60 秒，范围 1–3600），保存在一次性审批记录中，
+并在聊天审批卡与审批页显示。批准后不能更改时限；等待用户批准不计入执行时限。
+超时会终止本次受管进程树，已发生的文件或网络副作用仍须核对。
+
+执行结果包含 execution_backend、next_execution_backend、success 与 diagnostic。
+timeout/cancelled 即使带 exit_code=0 也不是成功。清理异常单独记录为 cleanup_error，
+保留已观察到的命令输出，不用清理异常覆盖实际执行结果。
+
+相关测试：`python -m unittest tools.test_host_environment tools.test_permission_recovery -v`。
+环境变量测试使用通用目录/工具链变量；conda/numpy/torch 是本机集成回归样例，
+不是特殊授权或自动安装分支。
+
+修复后的本机对照：批准路径执行 conda 23.7.4、numpy 1.26.4、torch 2.6.0+cu118 的版本查询与简单运算成功；原生沙箱仍无法导入宿主 numpy。这是特定机器的集成验证，不是安装依赖清单。
+
+真实 LLM 单次回归走通“沙箱缺依赖 → 请求授权 → 宿主执行一次 → 报告结果”，6 次模型调用、30.11 秒、按应用单价约 $0.00156。审批由隔离测试器对固定无害命令自动回答，不是在线用户审批；候选命令已在测试提示中给出。私有报告 `.diagnostics/host-environment-llm-v1/report.json` 不公开发布。可用 `python tools/check_permission_recovery_live.py --real 新输出目录` 运行 allow/deny/syntax 用例，会消耗 API 额度，需原生沙箱运行条件。
+
+本次 91 项相关回归的命令及验证范围见 [当前项目说明](CURRENT.md)。上游模型超时未被消除；验收进度为 reporting 不能代替最终宿主通过，累计 token/耗时不能表述为最后一次调用的用量。

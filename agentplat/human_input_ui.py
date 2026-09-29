@@ -58,7 +58,7 @@ async function refresh(){
    if(done)text('span',approval?q.payload.command:q.payload.question,head).className='hi-brief';
    text('span',done?(labels[q.status]||q.status):'等待回答',head).className='hi-badge';
    text('p',approval?q.payload.reason:q.payload.question,card).className='hi-question';
-   if(approval){text('pre',q.payload.command,card).className='hi-command';text('p','执行位置 · '+q.payload.workspace,card).className='hi-location';if(q.payload.scope)text('p',q.payload.scope,card);if(q.payload.risk)text('p',q.payload.risk,card);}
+   if(approval){text('pre',q.payload.command,card).className='hi-command';text('p','执行位置 · '+q.payload.workspace,card).className='hi-location';text('p','宿主执行时限 · '+(q.payload.timeout_s??60)+' 秒（不含等待批准）',card);if(q.payload.scope)text('p',q.payload.scope,card);if(q.payload.risk)text('p',q.payload.risk,card);}
    if(done){const reply=text('div','',card);reply.className='hi-reply';text('span',approval?'你的决定':'你的回答',reply).className='hi-label';text('p',approval?(labels[q.status]||q.status):(q.answer||'未提供回答'),reply).className='hi-answer';drafts.delete(q.id);continue;}
    const form=text('form','',card);form.className='hi-form';
    const options=text('div','',form);options.className='hi-options';

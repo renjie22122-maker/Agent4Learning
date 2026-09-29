@@ -1,5 +1,7 @@
 # 审批与结构化追问：现状和建议
 
+当前推荐宿主执行入口是 `request_execution(command, reason, timeout_s=60)`：等待授权后直接执行一次，时限随审批保存。下文保留结构化交互的设计沿革；当前环境、执行结果与单次授权规则以 [权限恢复](PERMISSION-RECOVERY.md) 为准。
+
 ## 当前已实现
 
 request_host_command 提交精确宿主命令请求；审批页面由用户允许或拒绝。授权绑定 session、workspace、command，默认30分钟有效，一次性消费。旧聊天一句“允许”不会自动成为授权。已有绑定和一次性消费测试。

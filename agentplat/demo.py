@@ -895,7 +895,7 @@ def make_handler(demo: DemoServer):
                 from .approvals import list_requests
                 rows = []
                 for item in list_requests():
-                    detail = html.escape(item['command'])
+                    detail = html.escape(item['command']) + '\n宿主执行时限：' + str(item.get('timeout_s',60)) + ' 秒（不含等待批准）'
                     form = ''
                     if item['status'] == 'pending' and item['expires'] > time.time():
                         form = f'<form method="post" action="/approvals/decide"><input type="hidden" name="token" value="{demo.permissions_token}"><input type="hidden" name="id" value="{item["id"]}"><button name="decision" value="deny">拒绝</button><button name="decision" value="allow">允许这一次宿主命令</button></form>'

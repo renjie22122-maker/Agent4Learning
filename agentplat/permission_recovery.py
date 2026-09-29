@@ -26,11 +26,23 @@ def guidance(agent, name, output):
             '不得把受限文件或网页操作改写成宿主命令绕过授权。')
 
 
-def request_execution(agent, command, reason):
+def request_execution(agent, command, reason, timeout_s=60):
     from .human_input import request_command
     from .approvals import execute
-    decision = request_command(agent, command, reason)
+    decision = request_command(agent, command, reason, timeout_s=timeout_s)
     if decision.get('status') != 'approved':
         return {**decision, 'executed': False}
     result = execute(agent, decision['request_id'])
     return {**decision, 'executed': True, 'result': result}
+
+
+def host_failure_guidance(result):
+    if result.get('success'): return ''
+    text=result.get('output','').lower()
+    if 'could not determine home directory' in text or 'expanduser' in text:
+        return '宿主进程无法定位用户目录：检查宿主环境变量与配置路径，不能据此认定软件安装损坏。'
+    if result.get('status') in ('timeout','cancelled'):
+        return '宿主命令未正常完成；先核对现有产物和进程结果。超时不等于安装损坏，不应直接重复安装或创建环境。'
+    if result.get('cleanup_error'):
+        return '命令结果已保留，但宿主临时资源清理失败；这是执行器问题，不是被调用软件损坏的证据。'
+    return '这是宿主执行结果。根据具体错误区分缺依赖、配置缺失、权限和代码错误；不能从沙箱结果推断宿主环境。'

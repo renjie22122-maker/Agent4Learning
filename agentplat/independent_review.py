@@ -28,7 +28,10 @@ def status(agent):
             'host_decision':decision, 'passed':decision['accepted'],
             'budget':{'limit_tokens':state.get('token_budget'), 'unlimited':state.get('token_budget')==0,'used_tokens':state.get('used_tokens')},
             'elapsed_seconds':round(max(0, time.time()-state.get('created_at',time.time())),1),
-            'note':'status/summary 是验收子任务的执行状态与报告；最终是否通过以 host_decision.accepted 为准。limit_tokens=0 表示单次不设限，不表示耗尽。'}
+            'note':'status/summary 是验收子任务的执行状态与报告；最终是否通过以 host_decision.accepted 为准。'
+                   'verification_progress 即使为 reporting、checks 写了通过，也只是过程记录，不能替代最终验收。'
+                   'used_tokens 与 elapsed_seconds 是整个验收子任务的累计值，不是最后一次模型调用的消耗。'
+                   'limit_tokens=0 表示单次不设限，不表示耗尽。'}
 
 
 def status_question(text):

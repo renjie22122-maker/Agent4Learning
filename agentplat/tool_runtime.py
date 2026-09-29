@@ -1,4 +1,5 @@
 """Tool execution boundary: intent persistence, live authority, invocation."""
+import json
 from .loop_types import LoopStep
 from agentlab.providers import ChatMessage
 from .tool_protocol import _brief
@@ -54,6 +55,10 @@ class ToolRuntime:
                 if name == 'run_shell':
                     state = self.ws.last_execution or {}
                     ok = state.get('status') == 'exited' and state.get('exit_code') == 0
+                elif name in ('request_execution', 'run_approved_command'):
+                    value = json.loads(out)
+                    state = value.get('result', {}) if name == 'request_execution' else value
+                    ok = state.get('success', state.get('status') == 'exited' and state.get('exit_code') == 0)
             except WorkspaceError as exc:
                 # 越界/违规是**预期内的拒绝**，要把原因讲清楚让模型改做法，
                 # 而不是让它以为是系统故障然后重试同样的调用。
