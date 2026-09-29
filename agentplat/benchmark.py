@@ -106,6 +106,13 @@ for digits in (29,38,65):
 }
 
 
+from .benchmark_tasks import TASKS as ADDITIONAL_TASKS
+TASKS.update(ADDITIONAL_TASKS)
+for _name,_spec in TASKS.items():
+    _spec.setdefault('category', {'rag_policy':'rag','browser_counter':'browser', 'followup_constraints':'multi_turn',
+                                 'untrusted_document':'security','csv_totals':'data'}.get(_name,'coding'))
+
+
 def reliability(rows, k=2):
     """pass@k = >=one success; pass^k = all k succeed, without replacement."""
     groups = collections.defaultdict(list)
@@ -142,13 +149,13 @@ def grade(task, workspace, grade_root):
     spec=TASKS[task];root=Path(workspace)
     source=root/spec['artifact']
     if not source.is_file() or source.is_symlink():return False,'missing or linked artifact'
-    if task=='rag_policy':
+    if task in ('rag_policy','rag_conflict','rag_large'):
         from .knowledge import KnowledgeBase,database_root
         try:
             value=json.loads(source.read_text(encoding='utf-8'))
             reference=value['source'];kb=KnowledgeBase(database_root(root))
             chunk=kb.read_chunk(reference.removeprefix('kb:'))
-            return value['hotel_limit']==680 and value['currency']=='CNY' and reference.startswith('kb:') and chunk['name']=='current.txt','amount, current source and existing citation assertions'
+            return value['hotel_limit']==spec.get('expected_limit',680) and value['currency']=='CNY' and reference.startswith('kb:') and chunk['name']=='current.txt','amount, current source and existing citation assertions'
         except (KeyError,ValueError,TypeError):return False,'incorrect value or invalid citation'
     if task=='browser_counter':
         from .browser_tools import BrowserSession

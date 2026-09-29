@@ -28,6 +28,8 @@ def main():
             'constraint_verbatim':constraint in [m.content for m in messages]}
     report={'checks':checks,'summary_calls':result[1],'summary_usd':result[2],
             'missing':result[3],'billing':compactor.last_billing}
+    from agentplat.evaluation_report import envelope
+    report['evaluation']=envelope('integration',[{'id':k,'status':'passed' if v else 'failed'} for k,v in checks.items()],planned_cases=len(checks))
     path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False));assert all(checks.values()),checks
 

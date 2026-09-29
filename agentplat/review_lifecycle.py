@@ -3,6 +3,27 @@ import json
 
 
 class ReviewLifecycle:
+    def _finalize_delivery(self, result, author_summary):
+        """The host's current verdict is distinct from pre-review author prose."""
+        result.author_summary = author_summary
+        result.summary = author_summary
+        # Reviewer output is a machine-readable JSON contract, not a UI report.
+        if getattr(self, 'verification_task', False):
+            return
+        record = getattr(self, '_independent_review', None) or {}
+        if record.get('passed') is not True:
+            return
+        from .runtime import workspace_digest
+        task = getattr(self, '_acceptance_task', getattr(self, '_task_text', ''))
+        if record.get('task') != task or record.get('digest') != workspace_digest(self.ws.scope):
+            raise RuntimeError('验收通过后任务或产物发生变化，不能发布旧验收结果')
+        result.acceptance = {k: record[k] for k in ('agent_id', 'digest', 'tests') if k in record}
+        result.acceptance['status'] = 'passed'
+        result.summary = ('**宿主最终验收：通过**\n\n验收任务：`' + record['agent_id'] +
+                          '`。以下为作者提交验收前的总结；其中的验收状态以本条最终记录为准。\n\n' + author_summary)
+        self.session.append('delivery/finalized', acceptance=result.acceptance,
+                            author_summary=author_summary)
+
     def _review_status_text(self):
         from .independent_review import status
         info = status(self)
@@ -41,6 +62,16 @@ class ReviewLifecycle:
             self._files_touched.append("[工作区内容发生变化，含 shell 改动]")
         if self.reflector is None:
             return ReflectionVerdict.ok()
+        general_review = bool(getattr(self.ws, 'general_chat', False) and self._files_touched)
+        if general_review:
+            # A projectless document must not require executing a shell command.
+            # Keep verification mandatory: an independent reviewer examines the
+            # version-bound artifact before the author's completion is accepted.
+            from .independent_review import check
+            independent = check(self)
+            if not independent.allow:
+                return independent
+            self._verified = True
         review_summary = str(args.get('summary', '') or '')
         human_answered = False
         question_ids = set()
@@ -64,7 +95,23 @@ class ReviewLifecycle:
             rejects=self._finish_rejects,
         )
         verdict = self.reflector.review(req)
-        if verdict.allow and self._files_touched and getattr(self, 'independent_review_required', False):
+        if verdict.allow and not general_review and self._files_touched and getattr(self, 'independent_review_required', False):
+            from .review_policy import decide
+            events=self.session.events
+            start=max((i for i,e in enumerate(events) if e.kind in ('run/started','followup/user')),default=0)
+            source_used=any(e.kind=='tool/call' and e.data.get('tool') in ('search_knowledge','read_knowledge_chunk','fetch_url') for e in events[start:])
+            profile=getattr(getattr(self,'cfg',None),'review_profile','strict')
+            actual_paths=self._files_touched; unknown=True
+            if profile=='balanced' and getattr(self,'_review_base',None) is not None:
+                from .isolation import inventory
+                try:
+                    current=inventory(self.ws.scope); base=self._review_base
+                    actual_paths=[p for p in current.keys() | base.keys() if current.get(p)!=base.get(p)]
+                    unknown=False
+                except (OSError,ValueError):pass
+            decision=decide(profile,actual_paths,unknown_changes=unknown,source_used=source_used)
+            self.session.append('review/policy',level=decision.level,reason=decision.reason)
+            if decision.level != 'independent': return verdict
             from .independent_review import check
             return check(self)
         return verdict

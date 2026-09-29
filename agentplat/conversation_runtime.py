@@ -131,12 +131,21 @@ class ConversationRuntime:
         同一份 messages，模型才知道自己刚才做过什么。
         """
         messages: list[ChatMessage] = [ChatMessage("system", CODING_SYSTEM)]
+        if getattr(self.ws, 'general_chat', False):
+            messages.append(ChatMessage('system', '当前为普通对话，不是项目编码任务。'
+                '纯问答直接给用户完整答复即可结束，不必调用 finish、list_dir 或命令来证明回答完成。'
+                '只有用户要求生成产物时才用本会话文件工具；文本可用 check_file_text 核对并提交独立验收。'
+                '没有项目目录，不能执行 shell 或申请宿主命令。用户仅提供路径不会自动授权绑定项目，请引导其通过项目设置选择。'))
         if context:
             messages.append(ChatMessage("system", f"[背景资料]\n{context}"))
         messages.append(ChatMessage(
             "user",
-            f"任务：{task}\n\n工作区根目录：{self.ws.root}；可用文件夹：{self.ws.roots}。文件工具支持 @别名/路径，run_shell 的 cwd 可选 @别名；每条沙箱命令仅授权所选文件夹\n"
-            f"（先用 list_dir 看看里面有什么，再决定怎么做）",
+            (f"任务：{task}\n\n这是普通对话，没有绑定任何项目目录。直接回答问题，无需先扫描文件。"
+             f"附件可通过附件工具读取；只有需要生成文件时才使用本会话独立产物目录 {self.ws.root}。"
+             "不得访问其他会话或默认 workspace；执行本地命令、修改项目或委派项目工作需要用户先选择项目。"
+             if getattr(self.ws,'general_chat',False) else
+             f"任务：{task}\n\n工作区根目录：{self.ws.root}；可用文件夹：{self.ws.roots}。文件工具支持 @别名/路径，run_shell 的 cwd 可选 @别名；每条沙箱命令仅授权所选文件夹\n"
+             f"（先用 list_dir 看看里面有什么，再决定怎么做）"),
         ))
         try:
             res = self._turn(task, messages, model, fresh=True)

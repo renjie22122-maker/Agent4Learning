@@ -152,9 +152,13 @@ class DemoServer:
                 "请先到「LLM 设置」页配置 API Key。"
             )
 
-        if workspace_group == '__general__':
-            from .workspaces import DEFAULT_WORKSPACE
-            folders, group_id = {'main':DEFAULT_WORKSPACE}, ''
+        from .workspaces import DEFAULT_WORKSPACE
+        from .general_chat import storage
+        session_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+        general = workspace_group == '__general__' or (not workspace_group and
+            not self.ws_mgr.current_group and self.ws_mgr.current == DEFAULT_WORKSPACE)
+        if general:
+            folders, group_id = {'main':storage(self.ws_mgr, session_id)}, ''
         elif workspace_group:
             group = self.ws_mgr.groups.get(workspace_group)
             if not group: raise ValueError('项目不存在，请重新选择项目')
@@ -164,11 +168,11 @@ class DemoServer:
             folders, group_id = self.ws_mgr.current_folders(), self.ws_mgr.current_group
         root = next(iter(folders.values()))
         self._check_workspace_available(folders)
-        session_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
         self._stop_flag = threading.Event()
         self.agent_state = {
             "session_id": session_id, "task": task, "status": "running",
             "workspace": str(root), "started_at": time.time(),
+            "conversation_kind": 'general' if general else 'project',
             "workspace_roots": {k:str(v) for k,v in folders.items()}, "workspace_group": group_id,
             "steps": [], "summary": "", "usd": 0.0, "iterations": 0,
             "tool_calls": 0, "error": "", "turns": [], "pending": [], "steering_messages": [], "current_text": task,
@@ -294,6 +298,7 @@ class DemoServer:
         from .workspace import Workspace
         workspace = Workspace(root)
         workspace.group_id = self.agent_state.get('workspace_group', '')
+        workspace.general_chat = self.agent_state.get('conversation_kind') == 'general'
         root = workspace.root
 
         from dataclasses import replace
@@ -346,8 +351,8 @@ class DemoServer:
             llm=client, cfg=cfg, workspace=workspace,
             guard=guard, on_step=on_step,
             hard_iterations=max(0, int(max_iters)),
-            session_dir=Path(root).parent / ".sessions" if root.name == "workspace"
-            else root / ".sessions",
+            session_dir=(Path(self.ws_mgr.state_path).parent / '.sessions' if workspace.general_chat
+                         else Path(root).parent / ".sessions" if root.name == "workspace" else root / ".sessions"),
             session_id=session_id,
             stop_flag=stop_flag, steering=steering,
         )
@@ -363,6 +368,9 @@ class DemoServer:
         agent.independent_review_required = True
         from .access_modes import apply
         apply(agent, getattr(self, 'default_permission_mode', 'auto'))
+        if workspace.general_chat:
+            from .general_chat import install
+            install(agent)
         return agent
 
     def _run_agent_thread(self, text: str, *, followup: bool) -> None:
@@ -390,6 +398,8 @@ class DemoServer:
                     "usd": round(r.usd, 6), "iterations": r.iterations, "model_calls": r.model_calls,
                     "stopped_by": r.stopped_by,
                 })
+                from .conversation_versions import capture
+                state['turns'][-1]['file_version'] = capture(self.ws_mgr, agent.ws.roots)
                 agent.session.append('ui/turn', **state['turns'][-1])
                 state['turn_saved'] = True
                 from .billing import include_children
@@ -494,6 +504,8 @@ class DemoServer:
                         "task": created[0].data.get("task", "") if created else "",
                         "workspace_roots": created[0].data.get('workspace_roots', {}) if created else {},
                         "workspace_group": created[0].data.get('workspace_group', '') if created else '',
+                        "conversation_kind": created[0].data.get('conversation_kind', 'legacy') if created else 'legacy',
+                        "branch_source": created[0].data.get('branch_source') if created else None,
                         "iterations": st.iterations_done,
                         "tool_calls": st.tool_calls_done,
                         "usd": st.usd, "workspace": str(log.of_kind("session/created")[0]
@@ -744,7 +756,13 @@ def make_handler(demo: DemoServer):
             return  # 静音默认访问日志
 
         # ---- 基础工具 --------------------------------------------------
-        def _send(self, code: int, body: bytes, ctype: str = "text/html; charset=utf-8"):
+        def _send(self, code: int, body: bytes | str, ctype: str = "text/html; charset=utf-8"):
+            # Normalize before sending headers: a late TypeError would append a
+            # second HTTP response inside the first response's HTML body.
+            if isinstance(body, str):
+                body = body.encode("utf-8")
+            if not isinstance(body, bytes):
+                raise TypeError("HTTP response body must be bytes or str")
             try:
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
@@ -823,6 +841,9 @@ def make_handler(demo: DemoServer):
         # ---- GET -------------------------------------------------------
         def _route_get(self):
             qs, path = self._q()
+            if path == '/api/reply-feedback':
+                from .conversation_actions import ratings
+                return self._json(200, ratings(demo, qs.get('session','')))
             if path == '/api/human-input':
                 from .human_input import list_questions
                 return self._json(200, {'questions':list_questions(qs.get('session',''))})
@@ -1104,12 +1125,8 @@ def make_handler(demo: DemoServer):
                 from .recovery import page
                 return self._send(200, page(demo))
             if path == "/agent/resume":
-                from .session import SessionLog, find_latest_session  # noqa: F401
-
                 sid = qs.get("session", "")
-                return self._redirect("/agent?notice=" + urllib.parse.quote(
-                    f"续跑请用命令行：python -m agentplat.loop --resume "
-                    f"<会话目录>/{sid}.jsonl（界面续跑需要独立进程，避免与当前会话冲突）"))
+                return self._redirect('/agent?session=' + urllib.parse.quote(sid, safe='') + '#quick-resume')
 
             if path == "/models":
                 return self._send(200, pages.models(demo))
@@ -1224,6 +1241,27 @@ def make_handler(demo: DemoServer):
                 return self._send(413, b'body too large', 'text/plain')
             raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
             form = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
+            if path in ('/agent/reply-feedback', '/agent/branch'):
+                import secrets
+                if not secrets.compare_digest(form.get('token',''),demo.permissions_token):
+                    return self._json(403,{'error':'无效的表单授权'})
+                from .conversation_actions import feedback, branch
+                try:
+                    with demo._lock:
+                        result=(branch if path=='/agent/branch' else feedback)(demo,form)
+                    return self._json(200,result)
+                except (ValueError, OSError, RuntimeError) as exc:
+                    return self._json(409,{'error':str(exc)})
+            if path == '/agent/continue':
+                import secrets
+                if not secrets.compare_digest(form.get('token', ''), demo.permissions_token):
+                    return self._json(403, {'error': '无效的表单授权'})
+                from .quick_resume import resume
+                try:
+                    sid = resume(demo, form.get('session', ''))
+                    return self._json(200, {'session': sid})
+                except (ValueError, RuntimeError, OSError) as exc:
+                    return self._json(409, {'error': str(exc)})
             if path == '/agent/human-input':
                 import secrets
                 if not secrets.compare_digest(form.get('token',''), demo.permissions_token):
@@ -1404,6 +1442,11 @@ def make_handler(demo: DemoServer):
                         pass
             cfg.offline_mock_fallback = form.get("offline_mock_fallback") == "1"
             cfg.memory_enabled = form.get('memory_enabled') == '1'
+            for name,allowed in (('review_profile',('strict','balanced')),('delegation_policy',('manual','adaptive'))):
+                value=form.get(name,getattr(cfg,name))
+                if value not in allowed:return self._send(400,b'invalid runtime policy','text/plain')
+                setattr(cfg,name,value)
+            if 'delegation_evidence_path' in form:cfg.delegation_evidence_path=form['delegation_evidence_path'].strip()
             for name,low,high in (('subagent_max_depth',1,8),('subagent_max_parallel',1,32),('subagent_max_tasks',1,128)):
                 if not low<=getattr(cfg,name)<=high:
                     return self._send(400,f'{name} must be {low}..{high}'.encode(),'text/plain')

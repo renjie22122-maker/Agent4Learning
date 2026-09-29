@@ -23,6 +23,7 @@ __pycache__/
 .agentlab_workspaces.json
 .sessions/
 .diagnostics/
+.chat-storage/
 .spill/
 workspace/
 .env

@@ -115,6 +115,11 @@ class SessionLog:
             obs(ev)
         return ev
 
+    def project_run(self):
+        from .run_projection import project
+        with self._lock:
+            return project(tuple(self.events))
+
     def _write(self, ev: Event) -> None:
         """追加一行并（可选）fsync。**失败必须抛，不能吞**。
 

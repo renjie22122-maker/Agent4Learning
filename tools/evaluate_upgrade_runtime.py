@@ -57,6 +57,10 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--sizes',nargs='+',type=int,default=[10000,100000]);parser.add_argument('--memory-only',action='store_true');parser.add_argument('--dimensions',type=int,default=512);parser.add_argument('--ef-search',type=int,default=512);args=parser.parse_args()
     report={'memory':memory_benchmark()}
     if not args.memory_only:report['ann']=ann_benchmark(args.sizes,args.dimensions,args.ef_search)
+    from agentplat.evaluation_report import envelope
+    cases=[{'id':f'memory:{i}','status':'passed' if c['top1_correct'] else 'failed'} for i,c in enumerate(report['memory']['cases'])]
+    cases += [{'id':f'ann:{c["vectors"]}:{c["dimensions"]}', 'status':'measured'} for c in report.get('ann',[])]
+    report['evaluation']=envelope('retrieval',cases,vars(args),planned_cases=len(cases))
     path=Path(args.output);path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps(report,ensure_ascii=False))
 
 

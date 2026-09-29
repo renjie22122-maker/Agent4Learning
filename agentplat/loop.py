@@ -74,8 +74,13 @@ class CodingAgent(ReviewLifecycle, ConversationRuntime, ContextRuntime, ModelRun
         max_wall_s: float | None = None,
         enable_subagents: bool = True,
         steering=None,
+        services=None,
     ):
         self.llm = llm
+        from .runtime_services import RuntimeServices
+        self.services = services or RuntimeServices()
+        from .tool_guards import ToolGuards
+        self.tool_guards = ToolGuards()
         self.cfg = cfg
         self.ws = workspace or Workspace()
         self.guard = guard

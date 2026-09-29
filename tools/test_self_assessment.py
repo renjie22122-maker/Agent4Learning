@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sys
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +40,16 @@ BARE_DIRS = ("agentplat", "tools", "labs", "docs", "agentlab")
 FILE_PREFIXES = ("agentplat/", "tools/", "labs/", "docs/", "agentlab/",
                  ".diagnostics/", ".sessions/", "verify.py", "README.md")
 RAW_PREFIXES = (".agent-runtime/",)   # 宿主管理，不允许读，跳过
+SOURCE_REVISION = '964eb3e'  # Archived report describes the pre-runtime20 source.
+
+
+def source_text(path: Path) -> str:
+    relative = path.relative_to(ROOT).as_posix()
+    try:
+        return subprocess.check_output(['git', 'show', f'{SOURCE_REVISION}:{relative}'],
+            cwd=ROOT, timeout=10, stderr=subprocess.DEVNULL).decode('utf-8')
+    except (OSError, subprocess.SubprocessError):
+        raise RuntimeError(f'历史源码 {SOURCE_REVISION}:{relative} 不可用；不能以当前源码冒充历史版本')
 
 #: 报告里**故意**提到的"不存在的路径"：提到它们正是为了说明这类能力缺失，
 #: 或者是为了记录"这条引用写错过、已修正"。校验方式相反 —— 必须确实不存在。
@@ -81,6 +92,7 @@ def lines_of(path: Path) -> int:
 def check_citations(text: str) -> None:
     """每个行内代码引用都要能落到真实文件与真实行号。"""
     cited = resolved = line_hits = absent = absent_sessions = 0
+    failures_before = len(_bad)
     for span in sorted(set(re.findall(r"`([^`\n]+)`", text))):
         if "*" in span or "\\" in span:
             continue
@@ -93,7 +105,7 @@ def check_citations(text: str) -> None:
         path, spec = match.group(1), match.group(2)
         if path.startswith(RAW_PREFIXES):
             continue
-        if path.startswith(".sessions/") and not (ROOT / ".sessions").is_dir():
+        if path.startswith((".sessions/", ".diagnostics/")) and not (ROOT / path).is_file():
             # 隔离副本不复制 .sessions（isolation.py:8），这类引用在此处无从核对，
             # 属于"没素材"而不是"引用造假"。
             absent_sessions += 1
@@ -112,21 +124,26 @@ def check_citations(text: str) -> None:
             continue
         resolved += 1
         if spec:
-            total = lines_of(target)
+            total = len(source_text(target).splitlines()) if target.suffix == '.py' else lines_of(target)
             for part in spec.split(","):
                 end = max(int(x) for x in part.split("-"))
                 line_hits += 1
                 if end > total:
                     fail(f"引用行号越界：{path}:{part}（文件只有 {total} 行）")
-    good(f"引用可解析：{resolved}/{cited} 个文件引用命中，{line_hits} 个行号引用全部在文件范围内")
+    if len(_bad) == failures_before:
+        good(f"引用可解析：{resolved}/{cited} 个文件引用命中，{line_hits} 个行号引用在 {SOURCE_REVISION} 范围内")
     good(f"并已反向验证 {absent} 处「报告声明不存在」的引用确实不存在"
          f"（{'、'.join(EXPECTED_ABSENT)}）")
     if absent_sessions:
-        skip(f"{absent_sessions} 条 .sessions/* 引用在本环境无 .sessions 目录可比对（隔离副本不复制它）")
+        skip(f"{absent_sessions} 条私有历史证据引用已缺失；无法复核，不计为通过")
 
 
 def check_numbers() -> None:
     """多 Agent 成本放大倍数从原始产物重算，不从结论抄。"""
+    required = ['eval-runtime5-single.json','eval-runtime5-multi.json','runtime5-labs.txt','runtime5-invariants.txt']
+    if any(not (ROOT / '.diagnostics' / name).is_file() for name in required):
+        skip('历史诊断产物不完整，数字与历史发现未复核')
+        return
     single = json.loads((ROOT / ".diagnostics" / "eval-runtime5-single.json").read_text(encoding="utf-8"))
     multi = json.loads((ROOT / ".diagnostics" / "eval-runtime5-multi.json").read_text(encoding="utf-8"))
     s_tok = sum(r["parent_tokens"] + r.get("child_tokens", 0) for r in single)
@@ -187,8 +204,9 @@ def check_sessions() -> None:
         good(f"本会话 workspace = {workspace}（仓库根，A1 前提已核实）")
     else:
         fail(f"本会话 workspace 是 {workspace}，不等于仓库根，A1 的前提不成立")
-    calls = text.count('"kind": "tool/call"')
-    fails = text.count('"ok": false')
+    events = [json.loads(line) for line in text.splitlines() if line.strip()]
+    calls = sum(e.get('kind') == 'tool/call' for e in events)
+    fails = sum(e.get('kind') == 'tool/result' and e.get('data', {}).get('ok') is False for e in events)
     good(f"本会话（仍在进行）已记录工具调用 {calls} 次、失败 {fails} 次")
     if calls < 56 or fails < 7:
         fail(f"报告写的 56/7 高于日志实际值 {calls}/{fails}（脚本按单调下界校验）")
@@ -204,7 +222,8 @@ def check_sessions() -> None:
     else:
         fail(f"对照会话 workspace 是 {o_ws}，不是仓库 workspace 子目录")
     ctext = contrast.read_text(encoding="utf-8", errors="replace")
-    if '"tool": "run_shell", "ok": true' in ctext:
+    if any(e.get('kind') == 'tool/result' and e.get('data', {}).get('tool') == 'run_shell' and e.get('data', {}).get('ok') is True
+           for e in (json.loads(line) for line in ctext.splitlines() if line.strip())):
         good("对照会话确有成功的 run_shell（证明不是沙箱本身坏了）")
     else:
         fail("对照会话里找不到成功的 run_shell，A1 的对照证据不成立")
@@ -213,7 +232,7 @@ def check_sessions() -> None:
 def check_sandbox_reason() -> None:
     """被引用的 107-109 行必须真的是那条拒绝逻辑。"""
     target = ROOT / "agentplat" / "windows_sandbox.py"
-    window = "\n".join(target.read_text(encoding="utf-8").splitlines()[106:109])
+    window = "\n".join(source_text(target).splitlines()[106:109])
     if "is_relative_to(workspace)" in window and "工作区不能包含沙箱运行时" in window:
         good("windows_sandbox.py:107-109 确实是\"工作区包含运行时\"的拒绝逻辑")
     else:

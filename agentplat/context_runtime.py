@@ -45,6 +45,7 @@ class ContextRuntime:
         saved = sum(c.saved for c in hist)
         spent = sum(c.summary_usd for c in hist)
         return {
+            "run_projection": self.session.project_run(),
             "used_tokens": used,
             "window_tokens": win,
             "window_source": ('显式任务配置' if self._explicit_context_window is not None else __import__('agentplat.model_capacity', fromlist=['resolve']).resolve(self.cfg)[1]),

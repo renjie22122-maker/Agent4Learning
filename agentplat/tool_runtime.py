@@ -40,6 +40,12 @@ class ToolRuntime:
                           _brief(args, 120)))
             try:
                 from .runtime import invoke_checked, effective_policy
+                from .tool_guards import ToolRequest
+                guards = getattr(self, 'tool_guards', None)
+                if guards is not None:
+                    guards.check(ToolRequest(name, tool.destructive,
+                                             name in ('run_shell', 'start_process'),
+                                             getattr(tool, 'network', False)), args)
                 out = invoke_checked(name, args, tool.parameters, tool.fn,
                                      effective_policy(self), writes=tool.destructive,
                                      shell=name in ('run_shell', 'start_process'),

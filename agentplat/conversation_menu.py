@@ -44,6 +44,7 @@ MENU_JS = r'''
      b.onclick=async()=>{close();try{await fn();}catch(e){alert(e.message);}};menu.append(b);};
    add('在新标签页打开',()=>window.open('/agent?session='+encodeURIComponent(row.dataset.session),'_blank','noopener'));
    add('复制对话链接',async()=>{const link=new URL('/agent?session='+encodeURIComponent(row.dataset.session),location.origin).href;await navigator.clipboard.writeText(link);notice('对话链接已复制');});
+   add('复制全部对话',async()=>{const response=await fetch('/agent/export?session='+encodeURIComponent(row.dataset.session));if(!response.ok)throw Error('读取对话失败');await navigator.clipboard.writeText(await response.text());notice('完整对话已复制为 Markdown');});
    add('重命名',async()=>{const value=await edit('重命名对话',row.dataset.title);if(value!==null)await mutate(row,'rename',value);});
    add(state.pinned?'取消置顶':'置顶',()=>mutate(row,'pinned',!state.pinned));
    add(state.unread?'标记为已读':'标记为未读',()=>mutate(row,'unread',!state.unread));

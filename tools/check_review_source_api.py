@@ -40,6 +40,8 @@ def main():
                 'source_snapshot_intact':child.get('source_snapshot_intact'),
                 'parent_model_steps':agent.client.turn if hasattr(agent,'client') else 4,
                 'review_tokens':child.get('used_tokens'),'review_summary':child.get('summary','')}
+        from agentplat.evaluation_report import envelope
+        report['evaluation']=envelope('integration',[{'id':'source-snapshot-review','status':'passed' if result.ok and child.get('source_snapshot_intact') and child.get('source_snapshot') else 'failed'}],planned_cases=1)
         (root/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(report,ensure_ascii=False))
         assert result.ok,result.error

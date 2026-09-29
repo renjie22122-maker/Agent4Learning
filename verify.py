@@ -89,6 +89,7 @@ LABS: list[tuple[str, str, str]] = [
     ('lab-52-durable-operations', 'labs.lab_52_durable_operations', '跨重启副作用去重'),
     ('lab-54-semantic-memory', 'labs.lab_54_semantic_memory', '语义记忆与版本'),
     ('lab-55-team-dag', 'labs.lab_55_team_dag', '团队依赖调度'),
+    ('lab-56-runtime-contracts', 'labs.lab_56_runtime_contracts', '工具守卫与验收事实'),
 
 ]
 
@@ -243,24 +244,24 @@ def run_lab(lab_id: str, module: str, title: str, timeout: float) -> LabResult:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     t0 = time.perf_counter()
+    from agentplat.processes import ProcessSupervisor
+    supervisor = ProcessSupervisor()
     try:
         # 实验只执行仓库内固定夹具；真实服务仍默认隔离执行。
         env['AGENTLAB_EXECUTION_MODE'] = 'local'
-        proc = subprocess.run(
-            [sys.executable, "-m", module],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            env=env,
-        )
-        res.returncode = proc.returncode
-        out = (proc.stdout or "") + (proc.stderr or "")
-    except subprocess.TimeoutExpired as exc:
+        identifier = supervisor.start([sys.executable, "-m", module], ROOT,
+                                      timeout_s=timeout, env=env)
+        state = supervisor.wait(identifier, 1)
+        while state['status'] == 'running':
+            state = supervisor.wait(identifier, 1)
+        res.returncode = state['exit_code'] if state['status'] == 'exited' else -9
+        out = state['output']
+        if state['status'] != 'exited': out += '\n[PROCESS] '+state['status']
+    except Exception as exc:
         res.returncode = -9
-        out = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + f"\n[TIMEOUT] 超过 {timeout}s"
+        out = f'[HARNESS_ERROR] {type(exc).__name__}: {exc}'
+    finally:
+        supervisor.close()
     res.elapsed_s = time.perf_counter() - t0
     res.stdout = out
 

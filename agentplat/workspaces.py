@@ -186,7 +186,7 @@ class WorkspaceManager:
     def session_directories(self):
         roots = {self.current, DEFAULT_WORKSPACE, *(Path(r) for r in self.recent + self.session_roots)}
         roots.update(Path(v) for g in self.groups.values() for v in g['folders'].values())
-        return {r / '.sessions' for r in roots} | {r.parent / '.sessions' for r in roots}
+        return {r / '.sessions' for r in roots} | {r.parent / '.sessions' for r in roots} | {self.state_path.parent / '.sessions'}
 
     # ------------------------------------------------------------------
     def _add_root(self, path: Path | str) -> Path | None:

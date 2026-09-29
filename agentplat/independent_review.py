@@ -65,7 +65,7 @@ def validate_verdict(agent, args):
         elif status == 'fail':
             if not value['findings']: raise ValueError()
         elif value['findings'] or not value['tests'] or not agent.evidence.valid(agent.ws.scope):
-            return ReflectionVerdict(False,'pass 的 findings 必须为空数组，正面观察放在 tests；并且必须有当前文件上的成功命令或浏览器断言证据。无法执行应返回 blocked。','验收证据',agent._finish_rejects>=2)
+            return ReflectionVerdict(False,'pass 的 findings 必须为空数组，正面观察放在 tests；必须有当前文件上的成功命令、浏览器断言或 check_file_text 文本断言证据。文本断言不能证明程序运行正确。无法执行应返回 blocked。','验收证据',agent._finish_rejects>=2)
     except (ValueError,TypeError):
         return ReflectionVerdict(False,'finish.summary 必须是 JSON，包含 verdict=pass/fail/blocked/inconclusive、tests 数组、findings 数组；受阻须有 reason，失败须有具体 findings。','验收协议',agent._finish_rejects>=2)
     return ReflectionVerdict.ok()
@@ -158,6 +158,8 @@ def check(agent):
                 + '\n本次变更路径（只作定位线索，不是正确性证据）：\n' + json.dumps(getattr(agent, '_files_touched', []), ensure_ascii=False))
         if previous and previous.get('status') == 'completed':
             task += '\n宿主保存的上次独立验收结论（非作者自评）：\n' + previous.get('summary','')[:6000] + '\n这是修复复验：优先复现上次反例并验证修复，再运行必要回归；不要从头重建整套测试。'
+        if getattr(agent.ws, 'general_chat', False):
+            task += '\n本次是未绑定项目的普通对话。纯文本产物用 check_file_text 按原始需求构造预期值并逐字断言，可形成有效证据；不需要 shell 或浏览器。不得把文本断言当作代码行为测试。'
         try:
             identifier = manager.spawn(task, mode='isolated', token_budget=budget, purpose='verification',
                                        source_paths=list(getattr(agent, '_files_touched', [])))
@@ -196,6 +198,8 @@ def check(agent):
     if passed and source_used and not result.get('knowledge_reads'):
         return ReflectionVerdict(False, '验收者未直接读取知识库来源；作者转录材料不能替代独立来源证据。', '独立验收受阻', True)
     agent.session.append('independent_review/result', agent_id=record['agent_id'], passed=passed, digest=digest)
+    record['passed'] = passed
+    record['tests'] = verdict.get('tests', [])
     if passed: return ReflectionVerdict.ok()
     if result['status'] == 'completed' and verdict.get('verdict') in ('blocked','inconclusive'):
         return ReflectionVerdict(False,'独立验收受阻，未判定交付通过或失败。'+json.dumps(verdict,ensure_ascii=False)[:2500],

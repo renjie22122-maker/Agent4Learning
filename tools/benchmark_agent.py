@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from agentplat.benchmark import TASKS,grade,reliability,trace_metrics
+from agentplat.evaluation_report import envelope, benchmark_cases
 
 
 def wait_until_exit(supervisor, identifier):
@@ -32,6 +33,8 @@ def worker(spec_path):
     ws=Workspace(folder/'workspace')
     for name,content in task['files'].items(): (ws.root/name).write_text(content,encoding='utf-8')
     cfg=LLMConfig.load()
+    cfg.review_profile=spec.get('review_profile','strict')
+    cfg.delegation_policy='manual'
     from agentplat.knowledge import KnowledgeBase
     from agentplat.memory import MemoryStore
     assert not MemoryStore().list()
@@ -62,7 +65,7 @@ def worker(spec_path):
     passed,details=grade(spec['task'],ws.root,folder/'grader')
     children=[t['data'] for t in agent.children.tasks.values()] if agent.children else []
     import hashlib
-    row=dict(task=spec['task'],repeat=spec['repeat'],passed=passed,declared_ok=result.ok,
+    row=dict(task=spec['task'],category=task['category'],repeat=spec['repeat'],passed=passed,declared_ok=result.ok,
              all_turns_completed=all(r.ok for r in results),turn_stop_reasons=[r.stopped_by for r in results],
              clean_start=True,history_events_before_run=initial_history,memory_root=str(folder/'private-memory'),knowledge_root=str(ws.knowledge_root),
              vector_index=vector_index,
@@ -73,6 +76,9 @@ def worker(spec_path):
              child_usd_estimate=sum(x.get('usd',0) for x in children),
              child_tokens=sum(x.get('used_tokens',0) for x in children),
              grader_details=details,metrics=trace_metrics(agent.session.events))
+    row['total_usd_estimate']=row['parent_usd_estimate']+row['child_usd_estimate']
+    row['review_profile']=cfg.review_profile
+    row['projection']=agent.session.project_run()
     (folder/'result.json').write_text(json.dumps(row,ensure_ascii=False,indent=2),encoding='utf-8')
 
 
@@ -80,6 +86,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--real',action='store_true');ap.add_argument('--worker')
     ap.add_argument('--runs',type=int,default=2);ap.add_argument('--tasks',nargs='+',choices=list(TASKS),default=list(TASKS))
     ap.add_argument('--review',action='store_true');ap.add_argument('--timeout',type=int,default=240)
+    ap.add_argument('--review-profile',choices=['strict','balanced'],default='strict')
     ap.add_argument('--jobs',type=int,default=1);ap.add_argument('--max-steps',type=int,default=24);ap.add_argument('--output',default='.diagnostics/benchmark')
     args=ap.parse_args()
     if args.worker:return worker(args.worker)
@@ -93,7 +100,7 @@ def main():
     def trial(task,repeat):
         supervisor=ProcessSupervisor()
         folder=out/f'{task}-{repeat}';folder.mkdir()
-        spec=dict(task=task,repeat=repeat,folder=str(folder),max_steps=args.max_steps,review=args.review,timeout=args.timeout)
+        spec=dict(task=task,repeat=repeat,folder=str(folder),max_steps=args.max_steps,review=args.review,timeout=args.timeout,review_profile=args.review_profile)
         path=folder/'spec.json';path.write_text(json.dumps(spec))
         try:
             identifier=supervisor.start([sys.executable,'-X','utf8',str(Path(__file__).resolve()),'--worker',str(path)],ROOT,timeout_s=args.timeout)
@@ -111,6 +118,7 @@ def main():
                         artifact_reliability=reliability(rows),
                         workflow_reliability=reliability([{**r,'passed':bool(r.get('passed') and r.get('all_turns_completed',r.get('declared_ok')))} for r in rows]),
                         false_successes=sum(r.get('false_success',False) for r in rows))
+            report['evaluation']=envelope('task_benchmark',benchmark_cases(rows),vars(args),planned_cases=len(args.tasks)*args.runs)
             temp=out/'report.tmp';temp.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(out/'report.json')
             print(json.dumps({k:row.get(k) for k in ['task','repeat','passed','declared_ok','elapsed_s','classification']},ensure_ascii=False),flush=True)
 

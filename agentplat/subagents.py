@@ -25,8 +25,10 @@ class TokenBudgetExceeded(RuntimeError):
 
 class AgentManager:
     def __init__(self, cfg, workspace, directory, *, max_workers=3, max_queue=12,
-                 total_tokens=None, factory=None, parent_cancel=None):
+                 total_tokens=None, factory=None, parent_cancel=None, providers=None):
         self.cfg, self.workspace = cfg, workspace
+        from .subagent_providers import default_registry
+        self.providers=providers or default_registry()
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         self.pool = ThreadPoolExecutor(max_workers=max_queue, thread_name_prefix='subagent')
@@ -64,10 +66,17 @@ class AgentManager:
         temporary.replace(path)
         self.changed.notify_all()
 
-    def spawn(self, task: str, *, context='', token_budget=None, mode='readonly', depends_on=None, acceptance='', purpose='work', parent_id=None, source_paths=None, source_agent=None):
+    def spawn(self, task: str, *, context='', token_budget=None, mode='readonly', depends_on=None, acceptance='', purpose='work', parent_id=None, source_paths=None, source_agent=None, provider='local', category='general'):
         if not task.strip() or mode not in ('readonly', 'isolated'):
             raise ValueError('任务不能为空；mode 必须为 readonly 或 isolated')
         with self.lock:
+            self.providers.get(provider)
+            decision=None
+            if purpose=='work' and getattr(self.cfg,'delegation_policy','manual')=='adaptive':
+                from .delegation import decide,load_evidence
+                decision=decide(task,acceptance,context,parent_task=self.tasks[parent_id]['data']['task'] if parent_id else '',
+                    evidence=load_evidence(getattr(self.cfg,'delegation_evidence_path','')),category=category,model=self.cfg.model_or('mid') or self.cfg.model)
+                if decision['action']!='delegate':raise RuntimeError('建议主 Agent 直接完成：'+decision['reason'])
             if source_agent and (purpose!='verification' or source_agent not in self.tasks or self.tasks[source_agent]['data']['status']!='completed' or not self.tasks[source_agent].get('agent')):
                 raise ValueError('验收来源必须是已完成且仍有副本的当前任务')
             parent = self.tasks[parent_id] if parent_id else None
@@ -96,7 +105,7 @@ class AgentManager:
                         status='queued', token_budget=token_budget, used_tokens=0,
                         summary='', evidence=[], error='', messages=[], created_at=time.time(),
                         depends_on=depends_on, acceptance=acceptance, purpose=purpose, parent_id=parent_id, depth=depth,
-                        source_paths=source_paths, source_agent=source_agent)
+                        source_paths=source_paths, source_agent=source_agent, provider=provider,delegation_decision=decision)
             item = dict(data=data, cancel=threading.Event(), inbox=queue.Queue(maxsize=32), agent=None, branch=None)
             self.tasks[agent_id] = item
             self._save(item)
@@ -207,10 +216,15 @@ class AgentManager:
                 return None
             def steering():
                 return self.deliver(agent_id)
-            agent = CodingAgent(MeteredClient(), cfg, workspace=ws,
+            agent = self.providers.get(data.get('provider','local')).create(MeteredClient(), cfg, workspace=ws,
                                 session_dir=self.directory / agent_id, stop_flag=item['cancel'],
                                 policy=stopping, compaction_enabled=True, enable_subagents=False,
                                 steering=steering)
+            if not isinstance(agent,CodingAgent):raise TypeError('Provider must preserve CodingAgent host contracts')
+            agent.session.append('provider/selected',name=data.get('provider','local'))
+            if getattr(parent_ws, 'general_chat', False) and data.get('purpose') == 'verification':
+                from .document_assertions import install as install_assertions
+                install_assertions(agent)
             agent.run_deadline = getattr(self, 'run_deadline', None)
             from .runtime import effective_policy
             agent.authority_provider = (lambda: effective_policy(self.tasks[data['parent_id']]['agent'])) if data.get('parent_id') else getattr(self, 'authority_provider', lambda:CapabilityPolicy())
@@ -227,7 +241,7 @@ class AgentManager:
                 agent.verification_task = True
                 from .browser_tools import install as install_browser
                 install_browser(agent)
-                verification_tools = frozenset({'list_dir','read_file','grep','write_file','run_shell','finish','list_knowledge','search_knowledge','read_knowledge_chunk','list_attachments','read_attachment','search_attachment','browser_preview','browser_snapshot','browser_click','browser_fill','browser_check','browser_screenshot'})
+                verification_tools = frozenset({'check_file_text','list_dir','read_file','grep','write_file','run_shell','finish','list_knowledge','search_knowledge','read_knowledge_chunk','list_attachments','read_attachment','search_attachment','browser_preview','browser_snapshot','browser_click','browser_fill','browser_check','browser_screenshot'})
                 agent.tools = {k:v for k,v in agent.tools.items() if k in verification_tools}
                 from .verification_tools import install
                 install(agent, self, agent_id)

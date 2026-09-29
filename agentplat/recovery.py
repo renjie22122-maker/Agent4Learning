@@ -98,9 +98,12 @@ def page(demo):
                               'blocked':'已停止自动重试'}.get(raw_status,str(raw_status)))
     except (OSError, ValueError):
         status = '未启用桌面守护启动器'
-    return ('<!doctype html><meta charset="utf-8"><title>运行恢复</title>'
-            '<main style="max-width:900px;margin:40px auto;font:16px/1.7 sans-serif">'
+    from .ui import page as render_page
+    return render_page('运行恢复', '',
+            '<main>'
             '<a href="/agent">返回对话</a><h1>运行恢复</h1><p>守护进程最近状态：' + status + '</p>'
             '<p>只读任务在完整请求检查点中断时自动恢复一次。写入、命令、子任务或未知结果不会自动重放。'
             '需要核对的任务可进入原会话，检查日志与文件后发送继续指令。</p><ul>' +
-            ''.join(rows) + '</ul>' + ('<p>本次启动没有需要恢复的任务。</p>' if not rows else '') + '</main>')
+            ''.join(rows) + '</ul>' + ('<p>本次启动没有需要恢复的任务。</p>' if not rows else '') +
+            '<p class="muted">这里显示本次服务启动时的中断检查结果；打开页面不会启动、停止或重新执行任务。'
+            '这不是文件版本回滚，也不是所有历史任务的列表。</p></main>')

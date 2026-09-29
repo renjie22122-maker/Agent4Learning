@@ -753,6 +753,9 @@ def settings(demo, qs: dict, probe: dict | None = None, notice: str = "") -> byt
     <div class=field><label>max_tokens</label><input name=max_tokens value="{cfg.max_tokens}" size=6></div>
     <div class=field><label>上下文窗口（0=自动，当前 {cfg.resolved_context_window():,}）</label><input type=number min=0 name=context_window value="{cfg.context_window}" size=9></div>
     <div class=field><label>独立验收累计 token 预算（0=不限；仍遵守子任务总预算，新任务生效）</label><input type=number min=0 name=verification_token_budget value="{cfg.verification_token_budget}" size=9></div>
+    <div class=field><label>验收强度（新任务生效）</label><select name=review_profile><option value=strict {'selected' if cfg.review_profile=='strict' else ''}>严格：所有变更独立验收</option><option value=balanced {'selected' if cfg.review_profile=='balanced' else ''}>分级：纯文档检查证据，代码/来源/未知改动独立验收</option></select></div>
+    <div class=field><label>委派策略（新团队生效）</label><select name=delegation_policy><option value=manual {'selected' if cfg.delegation_policy=='manual' else ''}>按需委派</option><option value=adaptive {'selected' if cfg.delegation_policy=='adaptive' else ''}>实测收益：无有效对照证据时主 Agent 直接完成</option></select></div>
+    <div class=field><label>委派收益证据 JSON 路径（宿主可信报告）</label><input name=delegation_evidence_path value="{esc(cfg.delegation_evidence_path)}"></div>
     <div class=field><label>委派深度（主 Agent 为 0；2 允许孙 Agent）</label><input type=number min=1 max=8 name=subagent_max_depth value="{cfg.subagent_max_depth}"></div>
     <div class=field><label>团队模型请求并发</label><input type=number min=1 max=32 name=subagent_max_parallel value="{cfg.subagent_max_parallel}"></div>
     <div class=field><label>同时存活的团队任务数</label><input type=number min=1 max=128 name=subagent_max_tasks value="{cfg.subagent_max_tasks}"></div>

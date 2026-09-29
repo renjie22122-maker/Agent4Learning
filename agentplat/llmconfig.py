@@ -160,6 +160,9 @@ class LLMConfig:
     #: 配合 append_file 与"截断抢救"，长文件也能稳定写完。
     max_tokens: int = 8192
     verification_token_budget: int = 0  # 0: no per-review cap; shared budget still applies.
+    review_profile: str = 'strict'  # balanced relaxes document-only work, never code/security.
+    delegation_policy: str = 'manual'  # adaptive requires measured evidence; see delegation.py.
+    delegation_evidence_path: str = ''  # trusted host report, never supplied by model tool args.
     subagent_max_depth: int = 2
     subagent_max_parallel: int = 3
     subagent_max_tasks: int = 24

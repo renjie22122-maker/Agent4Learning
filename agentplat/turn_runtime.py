@@ -21,8 +21,11 @@ from .tool_protocol import _brief, _salvage_tool_args, _clean_path
 class TurnRuntime:
     def _turn(self, task: str, messages: list[ChatMessage],
               model: str | None, *, fresh: bool) -> LoopResult:
-        from .memory import inject
-        inject(self, task, messages)
+        if fresh and getattr(self.cfg,'review_profile','strict')=='balanced':
+            from .isolation import inventory
+            try: self._review_base = inventory(self.ws.scope)
+            except (OSError,ValueError): self._review_base = None
+        self.services.memory.recall(self, task, messages)
         # Unexpected exceptions used to skip offset advancement and step/end.
         # Derive the next ID from recorded starts, including unfinished steps.
         starts = [int(e.data.get('iteration', 0)) for e in self.session.of_kind('step/start')]
@@ -38,9 +41,8 @@ class TurnRuntime:
             for step in sorted(starts - ends):
                 if step >= min_step:
                     self._end_step(step, reason='exception_or_interruption')
-            from .memory import MemoryStore
             try:
-                MemoryStore().refresh(self.session.path)
+                self.services.memory.refresh(self.session.path)
             except (OSError, ValueError) as exc:
                 self.session.append('memory/extraction_error', error=str(exc))
 
@@ -49,12 +51,9 @@ class TurnRuntime:
                    model: str | None, *, fresh: bool) -> LoopResult:
         """一轮 = "问模型 → 执行工具 → 回灌"的循环，直到 finish 或触限。"""
         model = model or self.cfg.model_or("mid") or self.cfg.model
+        self.services.prepare_model(self.cfg)
         if self._explicit_context_window is None:
-            from .model_capacity import discover
-            discover(self.cfg)
             self.compactor.context_window = self.cfg.resolved_context_window(model)
-        from .billing import refresh as refresh_prices
-        refresh_prices(self.cfg)
         res = LoopResult(ok=False)
         t0 = time.perf_counter()
         tracer = Tracer("agent")
@@ -92,7 +91,8 @@ class TurnRuntime:
             self.session.append("session/created",
                                 session_id=self.session.session_id,
                                 task=task, model=model,
-                                workspace=str(self.ws.root), workspace_roots={k:str(v) for k,v in self.ws.roots.items()}, workspace_group=getattr(self.ws,'group_id',''))
+                                workspace=str(self.ws.root), workspace_roots={k:str(v) for k,v in self.ws.roots.items()}, workspace_group=getattr(self.ws,'group_id',''),
+                                conversation_kind='general' if getattr(self.ws,'general_chat',False) else 'project')
         # 续轮**不写** session/created（日志锚点必须唯一）——
         # 锚点重复会让 `find_latest_session()` / 重放都失去依据。
         #
@@ -273,9 +273,20 @@ class TurnRuntime:
             # 折中：允许在**已经成功执行过验证命令**之后用文字收尾。
             # 这不是放松要求，而是把判定依据从"模型说了什么"换成"证据是什么"。
             if not tool_calls:
-                if self._verified and (text or "").strip() and self._review_finish({"summary": text}).allow:
+                from .runtime import workspace_digest
+                general_answer = (getattr(self.ws, 'general_chat', False)
+                    and not self._files_touched and not getattr(self, '_independent_review', None)
+                    and workspace_digest(self.ws.scope) == self._initial_digest)
+                if general_answer and (text or '').strip() and self._review_finish({'summary':text}).allow:
+                    self._finalize_delivery(res, text.strip())
                     res.ok = True
-                    res.summary = (text or "").strip()
+                    res.stopped_by = 'finish_text'
+                    emit(LoopStep(it, 'finish', '答复完成', res.summary[:500]))
+                    res.elapsed_ms = (time.perf_counter()-t0)*1000.0
+                    return res
+                if self._verified and (text or "").strip() and self._review_finish({"summary": text}).allow:
+                    self._finalize_delivery(res, (text or "").strip())
+                    res.ok = True
                     res.stopped_by = "finish_text_after_verification"
                     emit(LoopStep(it, "finish",
                                   "验证通过后用文字收尾（视为完成）",
@@ -462,8 +473,8 @@ class TurnRuntime:
                             break
                         continue
 
+                    self._finalize_delivery(res, args.get("summary", "") or out)
                     res.ok = True
-                    res.summary = args.get("summary", "") or out
                     res.stopped_by = "finish"
                     # 反射结论必须**如实写下来**，包括"策略存在但都放行了"。
                     # 只在被拒时记录的话，"检查通过"和"没有检查"看起来一样 ——

@@ -1,6 +1,7 @@
 """Desktop launcher: reuse authenticated service, otherwise start it hidden."""
 import ctypes
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -47,6 +48,12 @@ def launch(open_browser=True):
             raise RuntimeError('另一个启动操作尚未结束，请稍后重试。')
         url = access_url()
         if not url:
+            # A service outlives its caller. Do not persist the restricted
+            # executor's intentionally dead network proxy into that service.
+            for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY'):
+                proxy = urllib.parse.urlsplit(os.environ.get(name, os.environ.get(name.lower(), '')))
+                if proxy.hostname in ('127.0.0.1', 'localhost') and proxy.port == 9:
+                    raise RuntimeError('当前启动环境带有受限代理 127.0.0.1:9。请通过桌面启动器或经授权的宿主环境启动；未修改系统代理。')
             with socket.socket() as probe:
                 if probe.connect_ex(('127.0.0.1', 8800)) == 0:
                     raise RuntimeError('8800 端口已被占用，但无法验证为当前项目的服务。未中止任何进程。')

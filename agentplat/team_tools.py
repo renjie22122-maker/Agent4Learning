@@ -34,7 +34,7 @@ def install(agent, manager, owner):
         return key
     if manager.get(owner)['depth'] < manager.max_depth:
         add('spawn_agent','创建自己的子任务，继承权限与团队总预算；返回 ID 后等待结果。',
-            {'task':string,'context':string,'acceptance':string,'mode':{'type':'string','enum':['readonly','isolated']},
+            {'task':string,'context':string,'acceptance':string,'provider':string,'category':string,'mode':{'type':'string','enum':['readonly','isolated']},
              'token_budget':{'type':'integer','minimum':0}},['task'],
             lambda **kw:{'agent_id':manager.spawn(parent_id=owner,**kw)})
     add('list_agents','查看本团队成员 ID、父子关系与运行状态。',{},[],manager.team_list)

@@ -486,6 +486,8 @@ def page_chat(title: str, active: str, sidebar: str, main: str,
     右侧面板默认宽度为 0（收起）。为什么用 CSS 宽度过渡而不是 `display:none`：
     展开/收起要有"抽屉"的手感；`display` 切换没有过渡，会突然跳一下。
     """
+    from .ui_polish import ASSETS
+    from .reply_actions_ui import ASSETS as REPLY_ASSETS
     meta = f'<meta http-equiv="refresh" content="{refresh_s}">' if refresh_s else ""
     return (
         f"<!doctype html><html lang=zh><head><meta charset=utf-8>"
@@ -493,7 +495,7 @@ def page_chat(title: str, active: str, sidebar: str, main: str,
         f"{meta}<title>{esc(title)} · Agent4Learning</title>"
         f"<style>{CSS}{CHAT_CSS}</style></head>"
         f'<body class=chat><div class=shell>{sidebar}{main}{panel}</div>'
-        f"{extra_js}"
+        f"{extra_js}{ASSETS}{REPLY_ASSETS}"
         f"</body></html>"
     ).encode("utf-8")
 

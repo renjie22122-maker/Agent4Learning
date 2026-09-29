@@ -32,6 +32,8 @@ def main():
             if result['status'] in FINAL or cancel.is_set():break
         verified=result['status']=='ready_for_final_review' and (ws.root/'combined.txt').read_text()=='alpha:beta'
         report={'passed':verified,'plan':result,'tokens':manager.budget.spent}
+        from agentplat.evaluation_report import envelope
+        report['evaluation']=envelope('integration',[{'id':'team-dag-merge','status':'passed' if verified else 'failed'}],planned_cases=1)
         (root/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps({'passed':verified,'status':result['status'],'nodes':{k:v['state'] for k,v in result['nodes'].items()},'tokens':manager.budget.spent},ensure_ascii=False))
         assert verified,result

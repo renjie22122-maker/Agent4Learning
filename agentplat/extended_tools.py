@@ -81,7 +81,7 @@ def install_runtime_tools(agent):
     add('write_process', '向仍在运行的交互命令发送短文本。', {**task_id, 'text': string},
         ['task_id', 'text'], agent.ws.processes.write, True)
     add('spawn_agent', '创建窄子任务，立即返回 ID。默认 readonly 仅查看文件，无 shell；需要运行命令或写文件必须选 isolated，使用独立副本并继承父级执行后端，需合并和验收；副本不是 OS 沙箱。',
-        {'task': string, 'context': string, 'acceptance': string,
+        {'task': string, 'context': string, 'acceptance': string, 'provider': string, 'category': string,
          'depends_on': {'type': 'array', 'items': string, 'maxItems': 12},
          'mode': {'type': 'string', 'enum': ['readonly', 'isolated']},
          'token_budget': {'type': 'integer', 'minimum': 0}}, ['task'],

@@ -2,7 +2,7 @@
 
 **一个可以运行的 Agent 工程教学实验室，附真实模型执行内核。**
 
-包含 50 个默认实验、1 个可选 ANN 实验与 3 个 Windows 原生隔离实验：每个实验都先让系统
+包含 51 个默认实验、1 个可选 ANN 实验与 3 个 Windows 原生隔离实验：每个实验都先让系统
 崩一次、打印出崩溃时的指标，再给出工程修复，最后用同一份负载跑对照组验证修复确实有效。
 实验指标来自固定负载与模拟模型，不能视为真实模型质量或生产认证。真实模型评估另行运行。
 
@@ -14,7 +14,7 @@
 
 ```bash
 # 核心教学实验使用 Python 3.11+ 标准库；可选集成另需依赖
-python verify.py                 # 50 个默认 lab；加 --native 包含 3 个 Windows 实测
+python verify.py                 # 51 个默认 lab；加 --native 包含 3 个 Windows 实测
 python -m labs.lab_06_layered_timeout   # 单独跑一个
 python -m agentplat.run          # 跑完整平台的多租户压测 + SLO 合规报告
 ```
@@ -466,3 +466,5 @@ $env:PYTHONIOENCODING = "utf-8"
 不要当作真实报价使用。
 
 检索、语义记忆、自动团队规划和模块化执行升级见 [runtime-20 说明](docs/RUNTIME20_UPGRADE.md)。`python verify.py --ann` 包含真实 HNSW 实验。
+
+工具守卫、宿主最终验收事实、统一评测格式和进程树清理见 [运行契约改进](docs/RUNTIME_CONTRACTS.md)。`python verify.py lab-56` 运行相应负对照实验。

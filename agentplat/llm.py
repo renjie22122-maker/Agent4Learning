@@ -422,7 +422,7 @@ class OpenAIChatClient:
         还是网络不通，而不是一句"失败了"。
         """
         t0 = time.perf_counter()
-        msgs = [ChatMessage("user", "回复一个字：好")]
+        msgs = [ChatMessage("user", '请返回一个 JSON 对象：{"reply":"好"}。')]
         try:
             text, usage = self.complete(model, msgs, timeout_s)
         except LLMError as exc:

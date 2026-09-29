@@ -16,6 +16,8 @@ class CleanBenchmarkTests(unittest.TestCase):
                 self.assertEqual(grade('rag_policy',root,root/'grader')[0],expected)
 
     def test_browser_grader_positive_and_negative(self):
+        from tools.browser_preflight import require_browser
+        require_browser()
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);ws=root/'ws';ws.mkdir()
             for delta,expected in [(2,False),(1,True)]:

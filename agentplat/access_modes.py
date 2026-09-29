@@ -2,7 +2,7 @@
 from .runtime import CapabilityPolicy
 
 MODES = {'readonly': '只读', 'auto': '自动（沙箱与逐次审批）', 'full': '完全访问（宿主命令）'}
-READ_TOOLS = frozenset({'list_dir','read_file','read_chunk','grep','finish','list_skills','read_skill','read_skill_file','search_knowledge','read_knowledge_chunk','list_knowledge','git_review','search_memory','list_attachments','read_attachment','search_attachment'})
+READ_TOOLS = frozenset({'check_file_text','list_dir','read_file','read_chunk','grep','finish','list_skills','read_skill','read_skill_file','search_knowledge','read_knowledge_chunk','list_knowledge','git_review','search_memory','list_attachments','read_attachment','search_attachment'})
 
 
 def apply(agent, mode):
