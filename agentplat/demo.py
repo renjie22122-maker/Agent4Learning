@@ -102,7 +102,7 @@ class DemoServer:
         if seed_cache:
             self.seed_cache()
 
-    def import_knowledge(self, path, *, reindex=False):
+    def import_knowledge(self, path, *, reindex=False, source=None):
         from .knowledge import KnowledgeBase, database_root
         with self._lock:
             if any(job['status'] == 'running' for job in self.knowledge_jobs.values()):
@@ -110,12 +110,15 @@ class DemoServer:
             if len(self.knowledge_jobs) >= 30:
                 self.knowledge_jobs.pop(next(iter(self.knowledge_jobs)))
             job_id = uuid.uuid4().hex
+            if source is None:
+                from .knowledge_scopes import resolve
+                source = resolve(self, {})
             workspace = self.ws_mgr.current
-            job = {'id': job_id, 'workspace': str(workspace), 'status': 'running', 'results': []}
+            job = {'id': job_id, 'workspace': str(workspace), 'knowledge_root': source['root'], 'scope': source['id'], 'status': 'running', 'results': []}
             self.knowledge_jobs[job_id] = job
         def worker():
             try:
-                kb = KnowledgeBase(database_root(workspace))
+                kb = KnowledgeBase(source['root'])
                 job['results'] = [] if reindex else kb.import_path(path)
                 from .vector_knowledge import build
                 job['vectors'] = build(kb, progress=lambda n:job.update(vector_chunks=n))
@@ -223,6 +226,7 @@ class DemoServer:
             )
         self.agent_state["steps"] = []
         self.agent_state['progress_messages'] = []
+        self.agent_state['progress_times'] = []
         self.agent_state['streamed_text'] = ''
         self.agent_state['turn_saved'] = False
         self.agent_state['summary'] = ''
@@ -299,6 +303,8 @@ class DemoServer:
         workspace = Workspace(root)
         workspace.group_id = self.agent_state.get('workspace_group', '')
         workspace.general_chat = self.agent_state.get('conversation_kind') == 'general'
+        from .knowledge_scopes import configure
+        configure(workspace, self.ws_mgr, session_id)
         root = workspace.root
 
         from dataclasses import replace
@@ -335,15 +341,17 @@ class DemoServer:
                 state['usage_pending'] = True
                 if state.get('streamed_text'):
                     state.setdefault('progress_messages',[]).append(state['streamed_text'])
+                    state.setdefault('progress_times',[]).append(state.get('streamed_at',time.time()))
                 state['streamed_text'] = ''
                 state["model_calls"] = state.get("model_calls", 0) + 1
             state["last_progress_at"] = time.time()
             state["phase"] = step.title
-            state["steps"].append(step.to_dict())
+            state["steps"].append({**step.to_dict(), "at":time.time()})
 
         client = OpenAIChatClient(cfg)
         client.cancel_event = stop_flag
         def on_text(delta):
+            if not state.get('streamed_text'): state['streamed_at'] = time.time()
             state['streamed_text'] = state.get('streamed_text', '') + delta
             state['last_progress_at'] = time.time()
         client.on_text = on_text
@@ -391,10 +399,11 @@ class DemoServer:
                     r = agent.run(text, model=agent.cfg.model_or("mid")
                                   or agent.cfg.model)
                 state["turns"].append({
-                    "text": text,
+                    "text": text, "at":state["started_at"], "ended_at":time.time(),
+                    "progress_times":list(state.get("progress_times",[]))+([state.get("streamed_at",time.time())] if state.get("streamed_text") else []),
                     "summary": r.summary or r.error or "", "steps": list(state['steps']),
                     "progress_messages": list(state.get('progress_messages',[])) + ([state['streamed_text']] if state.get('streamed_text') else []),
-                    "steering_messages": [dict(x) for x in state['steering_messages'][state.get('steering_start', 0):] if x['status'] == 'delivered'],
+                    "steering_messages": [dict(x) for x in state['steering_messages'][state.get('steering_start', 0):]],
                     "usd": round(r.usd, 6), "iterations": r.iterations, "model_calls": r.model_calls,
                     "stopped_by": r.stopped_by,
                 })
@@ -424,7 +433,7 @@ class DemoServer:
                 state.update({"result_status": "failed",
                                          "summary": f"{type(exc).__name__}: {exc}"})
                 if not state.get('turn_saved'):
-                    turn = {'text':text, 'summary':state['summary'], 'steps':list(state['steps']),
+                    turn = {'text':text, 'at':state['started_at'], 'ended_at':time.time(), 'progress_times':list(state.get('progress_times',[]))+([state.get('streamed_at',time.time())] if state.get('streamed_text') else []), 'steering_messages':list(state['steering_messages'][state.get('steering_start',0):]), 'summary':state['summary'], 'steps':list(state['steps']),
                             'progress_messages':list(state.get('progress_messages',[])) + ([state['streamed_text']] if state.get('streamed_text') else [])}
                     state['turns'].append(turn)
                     state['turn_saved'] = True
@@ -530,7 +539,8 @@ class DemoServer:
             include_children(state, agent)
             snapshot = dict(state)
             snapshot['steps'] = list(state.get('steps', []))
-            snapshot['turns'] = list(state.get('turns', []))
+            from .chat_timeline import enrich_turns
+            snapshot['turns'] = enrich_turns(state.get('turns', []), agent.session.events)
             snapshot['chat_ready'] = True
             snapshot['elapsed'] = round((state.get('finished_at') or time.time()) - state['started_at'], 1)
             return snapshot, {'available': True, **agent.context_stats()}
@@ -539,7 +549,8 @@ class DemoServer:
         if not entry:
             raise ValueError('找不到该会话')
         log, _ = SessionLog.load(Path(entry['log_path']))
-        turns = [e.data for e in log.events if e.kind == 'ui/turn']
+        from .chat_timeline import enrich_turns
+        turns = enrich_turns([e.data for e in log.events if e.kind == 'ui/turn'], log.events)
         if not turns:
             # Legacy logs have truncated summaries; expose exactly what was saved.
             current = {'text': entry.get('task', ''), 'summary': '', 'steps': []}
@@ -897,7 +908,7 @@ def make_handler(demo: DemoServer):
                     state = '启用' if item['enabled'] else '停用'
                     action = 'disable' if item['enabled'] else 'enable'
                     label = '停用' if item['enabled'] else '启用'
-                    rows.append(f'<div class="card"><h2>{html.escape(item["name"])}</h2><p>{state}</p><details><summary>查看 SKILL.md</summary><pre style="white-space:pre-wrap">{html.escape(item["text"])}</pre></details><form method="post" action="/skills/toggle"><input type="hidden" name="token" value="{demo.permissions_token}"><input type="hidden" name="name" value="{item["name"]}"><button name="action" value="{action}">{label}</button></form></div>')
+                    rows.append(f'<div class="card"><h2>{html.escape(item["name"])}</h2><p>技能名：{html.escape(item.get("skill_name",item["name"]))} · 来源：{html.escape(str(item.get("source","未记录来源")))}</p><p>{state}</p><details><summary>查看 SKILL.md</summary><pre style="white-space:pre-wrap">{html.escape(item["text"])}</pre></details><form method="post" action="/skills/toggle"><input type="hidden" name="token" value="{demo.permissions_token}"><input type="hidden" name="name" value="{item["name"]}"><button name="action" value="{action}">{label}</button></form></div>')
                 body = f'<h1>技能管理</h1><p>导入本机技能目录、SKILL.md 或 ZIP。支持包内参考文件；导入不会运行脚本。技能不能增加命令或网络权限。</p><form method="post" action="/skills/import"><input type="hidden" name="token" value="{demo.permissions_token}"><input name="path" required placeholder="技能目录或 ZIP 完整路径" style="width:70%"><button>导入并启用</button></form><p>{html.escape(qs.get("notice", ""))}</p>'
                 return self._send(200, ui.page('技能管理', 'agent', body + ''.join(rows)))
             if path == '/agent/access':
@@ -909,9 +920,10 @@ def make_handler(demo: DemoServer):
                 body = f'<h1>执行权限</h1><p>{"当前会话" if entry else "后续新任务默认模式"}：{html.escape(sid if entry else "")}</p><p>只读禁止写入与命令；自动沿用沙箱并逐次审批宿主命令；完全访问允许以你的本机权限执行命令，可能修改工作区以外文件。网络工具遵守网页访问设置。</p><form method="post" action="/agent/access"><input type="hidden" name="token" value="{demo.permissions_token}"><input type="hidden" name="session" value="{html.escape(sid)}"><select name="mode">{options}</select><button>应用权限选择</button></form><p>运行中在下一步骤边界生效；不撤销已执行的操作。重启后恢复任务默认回到自动模式。</p>'
                 return self._send(200, ui.page('执行权限', 'agent', body))
             if path == '/knowledge/document':
-                from .knowledge import KnowledgeBase, database_root
+                from .knowledge import KnowledgeBase
+                from .knowledge_scopes import resolve
                 import mimetypes
-                original, name = KnowledgeBase(database_root(demo.ws_mgr.current)).original(qs.get('id', ''))
+                original, name = KnowledgeBase(resolve(demo, qs)['root']).original(qs.get('id', ''))
                 kind = mimetypes.guess_type(name)[0] or 'application/octet-stream'
                 if not kind.startswith('image/'):
                     kind = 'application/octet-stream'
@@ -1364,16 +1376,25 @@ def make_handler(demo: DemoServer):
                 self.path = path + '?' + urllib.parse.urlencode(form)
                 return self._route_get()
 
-            if path in {'/knowledge/import', '/knowledge/remove', '/knowledge/reindex'}:
+            if path in {'/knowledge/import', '/knowledge/remove', '/knowledge/reindex', '/knowledge/select'}:
                 import secrets
                 if not secrets.compare_digest(form.get('token', ''), demo.permissions_token):
                     return self._send(403, b'invalid form token', 'text/plain')
+                from .knowledge_scopes import resolve, save_selection
+                from urllib.parse import urlencode
+                sid = form.get('session','')
+                if path == '/knowledge/select':
+                    with demo._lock:
+                        save_selection(demo,sid,[s for s in ('session','project','public') if form.get('use_'+s)=='on'])
+                    return self._redirect('/knowledge?'+urlencode({'session':sid,'scope':form.get('scope','session')}))
+                source = resolve(demo, form)
+                target = '/knowledge?'+urlencode({'session':sid,'scope':source['id']})
                 if path in {'/knowledge/import', '/knowledge/reindex'}:
-                    job = demo.import_knowledge(form.get('path', ''), reindex=path=='/knowledge/reindex')
-                    return self._redirect('/knowledge?job=' + job)
+                    job = demo.import_knowledge(form.get('path', ''), reindex=path=='/knowledge/reindex', source=source)
+                    return self._redirect(target+'&job=' + job)
                 from .knowledge import KnowledgeBase, database_root
-                KnowledgeBase(database_root(demo.ws_mgr.current)).remove(form.get('id', ''))
-                return self._redirect('/knowledge')
+                KnowledgeBase(source['root']).remove(form.get('id', ''))
+                return self._redirect(target)
 
             if path == '/permissions/web':
                 import secrets

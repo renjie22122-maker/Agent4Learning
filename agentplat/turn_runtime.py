@@ -70,6 +70,11 @@ class TurnRuntime:
         self._last_messages = messages
         # 反射要用任务原文抽需求条目。从 messages 里反推不行 ——
         # 压缩可能已经把那条 user 消息折成摘要了。
+        continuing = bool(getattr(self,'_resume_delivery',False)) and not fresh
+        self._resume_delivery = False
+        if continuing and not getattr(self,'_independent_review',None):
+            from .independent_review import restore_record
+            restore_record(self)
         if fresh:
             self._task_text = task
         else:
@@ -77,11 +82,12 @@ class TurnRuntime:
             # A follow-up is a new delivery scope. Historical edits are still
             # in the log, but must not force a fresh review for a read-only reply.
             from .runtime import workspace_digest
-            self._initial_digest = workspace_digest(self.ws.scope)
-            self._files_touched = []
-            from .independent_review import retire
-            retire(self, '开始新的对话任务')
-        self._acceptance_task = task
+            if not continuing:
+                self._initial_digest = workspace_digest(self.ws.scope)
+                self._files_touched = []
+                from .independent_review import retire
+                retire(self, '开始新的对话任务')
+        if not continuing: self._acceptance_task = task
         self.task_memory.requests.append(task)
         self._finish_rejects = 0
         emit(LoopStep(0, "think",

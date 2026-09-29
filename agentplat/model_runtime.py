@@ -27,7 +27,7 @@ class ModelRuntime:
                 '不要只回复“已实现/已保存/已通过测试”，让用户还得追问成果。除非用户要求，勿贴全部测试脚本或重复进度总结。'
                 '输入保证不自动变成额外防御性校验要求。不得把未执行的测试说成通过，也不得隐去影响成果使用的失败或限制。'))
         if general:
-            excluded = {'run_shell','start_process','spawn_agent','plan_team','request_host_command','run_approved_command','create_git_worktree'}
+            excluded = {'run_shell','start_process','spawn_agent','plan_team','request_execution','request_host_command','run_approved_command','create_git_worktree'}
             tool_schema = [s for s in tool_schema if s.get('function', {}).get('name') not in excluded]
         with tracer.span(f"llm_turn_{it}") as sp:
             emit(LoopStep(it, "think", "正在等待模型响应",

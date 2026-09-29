@@ -17,7 +17,7 @@ def install(agent):
         '普通对话未绑定项目；命令、宿主命令审批和项目委派需要先选择项目。'
         '文档产物请用 read_file 核对后调用 finish，由独立验收检查，不要为此申请宿主命令。'
         if request.shell or request.name in {'run_shell','spawn_agent','plan_team',
-            'request_host_command','run_approved_command','create_git_worktree'} else None)
+            'request_execution','request_host_command','run_approved_command','create_git_worktree'} else None)
 
 
 def is_general(active, summary):

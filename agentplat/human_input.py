@@ -106,11 +106,14 @@ def ask(agent, question, options=None):
 
 def request_command(agent, command, reason):
     from . import approvals
-    existing = [r for r in approvals.list_requests() if r['session'] == agent.session.session_id and r['command'] == command]
-    if any(r['status'] == 'denied' for r in existing):
+    approvals.check_authority(agent, command)
+    if not reason.strip(): raise ValueError('必须说明操作目的、受阻原因及为何需要宿主执行')
+    if approvals.denied(agent.session.session_id, agent.ws.root, command):
         raise PermissionError('用户已拒绝同一命令，不重复追问；请调整方案或等待用户主动变更授权')
     request = approvals.request(agent.session.session_id, agent.ws.root, command, reason)
-    return wait(agent, 'approval', {**request, 'command':command, 'reason':reason, 'workspace':str(agent.ws.root)})
+    return wait(agent, 'approval', {**request, 'command':command, 'reason':reason, 'workspace':str(agent.ws.root),
+        'scope':'仅此命令、仅此会话、允许一次；不更改后续沙箱或全局权限。',
+        'risk':'将在宿主运行，具有宿主用户可访问的文件与网络能力；工作目录不是文件访问边界。'})
 
 
 def install(agent):

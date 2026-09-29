@@ -199,11 +199,16 @@ class AgentManager:
             ws.execution_mode = parent_ws.execution_mode
             ws.native_network = parent_ws.native_network
             ws.knowledge_root = parent_ws.knowledge_root
+            if hasattr(parent_ws, 'knowledge_sources'):
+                ws.knowledge_sources = [dict(s) for s in parent_ws.knowledge_sources]
+                ws.knowledge_session = getattr(parent_ws, 'knowledge_session', '')
             ws.human_session = getattr(parent_ws, 'human_session', '')
             if data.get('purpose') == 'verification':
                 from .knowledge import snapshot
                 ws.knowledge_root = self.directory / agent_id / 'knowledge-snapshot'
-                data['knowledge_snapshot'] = snapshot(parent_ws.knowledge_root, ws.knowledge_root)
+                from .knowledge_scopes import snapshot_sources
+                data['knowledge_snapshots'] = snapshot_sources(parent_ws, ws, ws.knowledge_root)
+                data['knowledge_snapshot'] = {'scopes': data['knowledge_snapshots']}
             ws.memory_workspace = getattr(parent_ws, 'memory_workspace', parent_ws.root)
             data['execution_mode'] = ws.execution_mode
             data['workspace_isolation'] = 'copy' if data['mode'] == 'isolated' else 'readonly'

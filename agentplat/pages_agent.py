@@ -198,8 +198,13 @@ LIVE_JS = """
     const data=JSON.parse(event.data);
     const bottom=sc.scrollHeight-sc.scrollTop-sc.clientHeight<80;
     const top=sc.scrollTop;
-    const open=Array.from(sc.querySelectorAll('details')).map(x=>x.open);
+    const open=new Map(Array.from(sc.querySelectorAll('details[data-detail-key]')).map(x=>[x.dataset.detailKey,x.open]));
+    const cards=Array.from(sc.querySelectorAll('.hi-card'));
+    const active=document.activeElement,selection=active?.tagName==='TEXTAREA'?[active.selectionStart,active.selectionEnd]:null;
     sc.querySelector('.col').innerHTML=data.html;
+    for(const card of cards){const slot=Array.from(sc.querySelectorAll('[data-human-slot]')).find(x=>x.dataset.humanSlot===card.dataset.questionId);if(slot)slot.append(card);}
+    window.dispatchEvent(new Event('agent-timeline-updated'));
+    if(active?.isConnected&&selection){active.focus({preventScroll:true});active.setSelectionRange(...selection);}
     const context=document.getElementById('live-context');
     if(context && data.context_html)context.innerHTML=data.context_html;
     const title=document.querySelector('.top .ttl');
@@ -219,7 +224,7 @@ LIVE_JS = """
       spans[0].textContent=(data.context.ratio*100).toFixed(0)+'%';
       spans[1].textContent=(data.context.used_tokens/1000).toFixed(1)+'k/'+(data.context.window_tokens/1000).toFixed(0)+'k';
     }
-    sc.querySelectorAll('details').forEach((x,i)=>{if(i<open.length)x.open=open[i];});
+    sc.querySelectorAll('details[data-detail-key]').forEach(x=>{if(open.has(x.dataset.detailKey))x.open=open.get(x.dataset.detailKey);});
     sc.scrollTop=bottom?sc.scrollHeight:top;
     if(data.status!=='running'){
       events.close();
@@ -254,6 +259,10 @@ LIVE_JS = """
       window.agentAttachments?.clear(attachmentIds);
       const url=new URL(location.href);url.searchParams.set('session',sid);url.searchParams.delete('new');url.searchParams.delete('notice');
       history.replaceState(null,'',url);
+      document.querySelectorAll('a[href^="/knowledge"]').forEach(link=>{
+        const target=new URL(link.href);target.searchParams.set('session',sid);link.href=target;
+        if(link.classList.contains('knowledge-entry'))link.textContent='知识库：查看本会话检索范围';
+      });
       document.querySelectorAll('.top a[href*="/agent?panel="]').forEach(link=>{
         const target=new URL(link.href);target.searchParams.set('session',sid);link.href=target;
       });
@@ -306,7 +315,7 @@ def agent_page(mgr, sessions: list[dict], active: dict | None,
   {_alert(error, notice)}
   <div class=scroll id=scroll><div class=col>{_thread(active)}</div><div id="human-history" aria-label="交互记录"></div></div>
   <div id="human-input" data-session="{esc((active or {}).get('session_id',''))}" aria-live="polite"></div>
-  {_composer(active, running, mgr.current_group or ('__general__' if mgr.current == DEFAULT_WORKSPACE else ''))}
+  {_composer(active, running, mgr.current_group or ('__general__' if mgr.current == DEFAULT_WORKSPACE else ''), mgr)}
 </div>"""
     # 只有"跑着"的时候才自动刷新进度，否则每次看历史都会被整页刷新打断。
     rendered = ui.page_chat("编码 Agent", "agent", sidebar, main,
@@ -335,7 +344,7 @@ def _tools_menu(active, compact=False):
     sid=esc((active or {}).get('session_id',''))
     if compact:return f'<a class="iconbtn top-tools" href="/agent/tools?session={sid}">工具与设置</a>'
     return f'''<nav class="tools-direct" aria-label="工具与设置导航"><div class="tools-heading">工具与设置</div><div class="tools-grid">
-        <a href="/skills">技能管理</a><a href="/knowledge">文档知识库</a><a href="/memories">长期记忆</a><a href="/recovery">运行恢复</a>
+        <a href="/skills">技能管理</a><a href="/knowledge?session={sid}">文档知识库</a><a href="/memories">长期记忆</a><a href="/recovery">运行恢复</a>
         <a href="/team?session={sid}">多 Agent 团队</a><a href="/agent/access?session={sid}">执行权限模式</a>
         <a href="/approvals">宿主命令审批</a><a href="/permissions">网页访问设置</a>
         <a href="/settings">模型与 API 设置</a><a href="/">平台监控</a>
@@ -501,24 +510,33 @@ def _thread(active: dict | None) -> str:
     if origin:
         out.append(f'<div class="branch-notice">分支来源：<a href="/agent?session={quote(origin["session"])}#turn-{int(origin["turn"])}">第 {int(origin["turn"])} 轮</a> · {esc(origin["note"])}</div>')
     turns = active.get("turns") or []
+    from .human_input import list_questions
+    questions = active.get('human_questions')
+    if questions is None:
+        questions = list_questions(active['session_id']) if active.get('session_id') else []
+    placed=set()
+    def interactions(start, end):
+        selected=[q for q in questions if q['id'] not in placed and start <= q['created'] < end]
+        placed.update(q['id'] for q in selected)
+        return selected
     for i, t in enumerate(turns, start=1):
         out.append(_turn_user(t.get("text", ""), t.get("at") or 0, turn=i))
-        for item in t.get('steering_messages', []):
-            out.append(_turn_user(item['text'], item['at']) + '<div class=stats>追加提示 · 已加入上下文</div>')
-        out.append(_turn_agent(
-            _trace(t.get('steps', [])), f'第 {i} 轮 · ${t.get("usd", 0):.4f} · '
-                f'{t.get("iterations", 0)} 个模型步骤 · {stop_label(t.get("stopped_by", ""))}',
-            (t.get("summary") or "").strip(),t.get('progress_messages',[])))
+        end=(turns[i].get('at', float('inf')) if i<len(turns) else
+             active.get('started_at',float('inf')) if active.get('status')=='running' and not active.get('turn_saved') else float('inf'))
+        out.append(_turn_timeline(t, interactions(t.get('at',0),end),
+            f'第 {i} 轮 · ${t.get("usd", 0):.4f} · {t.get("iterations", 0)} 个模型步骤 · {stop_label(t.get("stopped_by", ""))}',
+            (t.get('summary') or '').strip(), f'turn-{i}'))
         out.append(_reply_actions(active, i, t.get('summary') or '', t.get('file_version', {})))
     if (active.get('status') == 'running' and not active.get('turn_saved')) or not turns:
         out.append(_turn_user(active.get('current_text') or active.get('task', ''), active.get('started_at', 0), turn=len(turns)+1))
-        progress=list(active.get('progress_messages',[]))+([active['streamed_text']] if active.get('streamed_text') else [])
-        out.append(_turn_agent(_trace(active.get('steps', [])), _stats(active), '' if active.get('status')=='running' else active.get('summary',''),progress))
-    for item in active.get('steering_messages', [])[active.get('steering_start', 0):]:
-        if active.get('status') != 'running' and item['status'] == 'delivered':
-            continue
-        label = '已加入上下文' if item['status'] == 'delivered' else '等待当前步骤结束'
-        out.append(_turn_user(item['text'], item['at']) + f'<div class=stats>追加提示 · {label}</div>')
+        current={**active,'at':active.get('started_at',0),
+                 'progress_messages':list(active.get('progress_messages',[]))+([active['streamed_text']] if active.get('streamed_text') else []),
+                 'progress_times':list(active.get('progress_times',[]))+([active.get('streamed_at',active.get('started_at',0))] if active.get('streamed_text') else []),
+                 'steering_messages':active.get('steering_messages',[])[active.get('steering_start',0):]}
+        out.append(_turn_timeline(current,interactions(current['at'],float('inf')),_stats(active),
+            '' if active.get('status')=='running' else active.get('summary',''),f'turn-{len(turns)+1}'))
+    for q in questions:
+        if q['id'] not in placed:out.append(f'<div class="human-slot" data-human-slot="{esc(q["id"])}"></div>')
     if active.get('historical'):
         out.append('<div class=stats>历史记录；包含完整上下文的日志可直接追问恢复，旧日志可能只保存了截断内容。</div>')
     extra = []
@@ -534,6 +552,39 @@ def _thread(active: dict | None) -> str:
     if active.get('billing') and active.get('status') != 'running':
         out.append(f'<div class=stats>{_stats(active)}</div>')
     return "".join(out)
+
+
+def _turn_timeline(turn, questions, stats, summary, key):
+    events=[]
+    start=turn.get('at',0)
+    for i,step in enumerate(turn.get('steps',[])):
+        events.append((step.get('at',start),0,i,'step',step))
+    times=turn.get('progress_times',[])
+    for i,text in enumerate(turn.get('progress_messages',[])):
+        if text.strip() and text.strip()!=summary.strip():
+            events.append((times[i] if i<len(times) else start,1,i,'progress',text))
+    for i,item in enumerate(turn.get('steering_messages',[])):
+        events.append((item.get('at',start),2,i,'steering',item))
+    for i,q in enumerate(questions):events.append((q['created'],3,i,'human',q))
+    out=[]; steps=[]; progress=[]; segment=0
+    def flush():
+        nonlocal segment
+        if steps or progress:
+            trace=_trace(steps, key=f'{key}-segment-{segment}').replace('class="trace step-group"',f'class="trace step-group" data-detail-key="{key}-segment-{segment}"')
+            out.append(_turn_agent(trace,'','',progress));steps.clear();progress.clear();segment+=1
+    for at,order,index,kind,value in sorted(events,key=lambda e:e[:3]):
+        if kind=='step':steps.append(value)
+        elif kind=='progress':progress.append(value)
+        else:
+            flush()
+            if kind=='human':out.append(f'<div class="human-slot" data-human-slot="{esc(value["id"])}"></div>')
+            else:
+                label='已加入上下文' if value.get('status')=='delivered' else '等待当前步骤结束'
+                out.append(_turn_user(value['text'],value.get('at',0))+f'<div class=stats>追加提示 · {label}</div>')
+    flush()
+    if summary:out.append(_turn_agent('',stats,summary))
+    elif stats:out.append(f'<div class=stats>{stats}</div>')
+    return ''.join(out)
 
 
 def _turn_user(text: str, at: float, *, turn=None) -> str:
@@ -586,15 +637,15 @@ def _turn_agent(trace: str, stats: str, summary: str, progress=None) -> str:
     return "".join(parts)
 
 
-def _trace(steps: list[dict]) -> str:
+def _trace(steps: list[dict], key='') -> str:
     icons = {"think": "·", "tool": "→", "observe": "·", "finish": "✓",
              "error": "✕", "guard": "!"}
 
-    def line(st: dict) -> str:
+    def line(st: dict, number: int) -> str:
         kind = st.get("kind", "")
         detail = st.get("detail") or ""
         title = esc(st.get("title", ""))
-        return (f'<details class="step-detail {esc(kind)}"><summary>'
+        return (f'<details class="step-detail {esc(kind)}" data-detail-key="{esc(key)}-step-{number}"><summary>'
                 f'<span class=k>{icons.get(kind, "·")}</span> {title}</summary>'
                 f'<div class="step-body">{esc(detail)}</div></details>')
 
@@ -609,7 +660,7 @@ def _trace(steps: list[dict]) -> str:
     return (f'<details class="trace step-group"><summary>执行步骤 · {len(steps)} 步'
             f' <span class="mut">（展开 / 收起）</span>'
             f'<span class="step-preview" aria-label="最近三条步骤预览">{"".join(previews)}</span></summary>'
-            f'{"".join(line(s) for s in steps)}</details>') if steps else ''
+            f'{"".join(line(s,i) for i,s in enumerate(steps))}</details>') if steps else ''
 
 
 def _stats(active: dict) -> str:
@@ -644,7 +695,7 @@ def _stats(active: dict) -> str:
             ''.join('<p>' + bit + '</p>' for bit in bits) + '</div></details>')
 
 
-def _composer(active: dict | None, running: bool, workspace_group: str = '') -> str:
+def _composer(active: dict | None, running: bool, workspace_group: str = '', mgr=None) -> str:
     """底部输入框：一个圆角盒子，发送按钮在右下。
 
     首轮提交和追问**合成同一个框** —— 没有活对话时提交新任务，
@@ -685,8 +736,14 @@ def _composer(active: dict | None, running: bool, workspace_group: str = '') -> 
         f'{lab}</a>'
         for v, lab in (("", "不设限"), ("0.20", "$0.20"),
                        ("0.50", "$0.50"), ("1.00", "$1.00")))
+    knowledge_label = '知识库：创建会话后设置'
+    if active and active.get('workspace') and mgr:
+        from .knowledge_scopes import sources, selected
+        enabled=selected(mgr,active.get('session_id',''),sources(active['workspace'],active.get('session_id',''),active.get('conversation_kind')=='general'))
+        knowledge_label='知识库：'+('、'.join(s['label'] for s in enabled) or '未启用')
     return f"""
 <div class=dock><div class=dockin>
+  <a class="knowledge-entry" href="/knowledge?session={esc((active or {}).get('session_id',''))}">{esc(knowledge_label)}</a>
   <div class="quick-actions" data-session="{esc((active or {}).get('session_id', ''))}">
     <button type="button" id="quick-resume" {'hidden' if not active or running or active.get('status') in ('done','finished') else ''}>▶ 继续任务</button>
     <a id="quick-stop" href="/agent/stop?session={esc((active or {}).get('session_id', ''))}" {'hidden' if not running else ''}>■ 停止任务</a>

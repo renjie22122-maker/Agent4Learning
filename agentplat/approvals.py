@@ -38,6 +38,23 @@ def list_requests():
         return [dict(row) for row in db.execute('SELECT * FROM approvals ORDER BY expires DESC LIMIT 100')]
 
 
+def denied(session, workspace, command):
+    with connection() as db:
+        return db.execute('SELECT 1 FROM approvals WHERE session=? AND workspace=? AND command=? AND status=? LIMIT 1',
+                          (session, str(Path(workspace).resolve()), command, 'denied')).fetchone() is not None
+
+
+def check_authority(agent, command=''):
+    from .runtime import effective_policy, PermissionDenied
+    if getattr(agent.ws, 'general_chat', False) or not agent.ws.allow_shell:
+        raise PermissionDenied('当前会话没有项目命令权限；请先在界面配置项目与执行权限')
+    effective_policy(agent).check('run_approved_command', writes=True, shell=True)
+    from .tool_guards import ToolRequest
+    guards = getattr(agent, 'tool_guards', None)
+    if guards is not None:
+        guards.check(ToolRequest('run_approved_command', writes=True, shell=True), {'command': command})
+
+
 def decide(identifier, allow):
     with connection() as db:
         count = db.execute('UPDATE approvals SET status=? WHERE id=? AND status=? AND expires>?',
@@ -58,15 +75,23 @@ def claim(identifier, session, workspace):
 
 def execute(agent, request_id):
     from .processes import ProcessSupervisor
+    check_authority(agent)
+    if agent.stop_flag is not None and agent.stop_flag.is_set():
+        raise PermissionError('任务已取消，未执行已批准命令')
     row = claim(request_id, agent.session.session_id, agent.ws.root)
+    check_authority(agent, row['command'])
     agent.session.append('approval/consumed', request_id=request_id, command=row['command'])
     agent.session.flush('before_approved_host_command')
     supervisor = ProcessSupervisor()
     try:
         from .execution_environment import task_environment
         key = supervisor.start(row['command'], agent.ws.root, shell=True, timeout_s=60, env=task_environment())
-        result = supervisor.wait(key, 60)
-        if result['status'] == 'running': result = supervisor.wait(key, 5)
+        while True:
+            result = supervisor.wait(key, .2)
+            if result['status'] != 'running': break
+            if agent.stop_flag is not None and agent.stop_flag.is_set():
+                result = supervisor.cancel(key)
+                break
         agent.session.append('approval/result', request_id=request_id, status=result['status'], exit_code=result['exit_code'])
         return result
     finally: supervisor.close()

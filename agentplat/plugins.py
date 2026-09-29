@@ -50,7 +50,7 @@ class PluginRegistry:
                                                      target.destructive, target.terminal, target.network)
                     self.skills.update(skills)
                     self.loaded[name] = {'version':manifest.get('version','0'), 'requires':manifest.get('requires', []),
-                                         'tools':[a for a,s,t in aliases], 'skills':[s for s,p in skills]}
+                                         'tools':[a for a,s,t in aliases], 'skills':[s for s,p in skills], 'source':manifest.get('source','未记录来源')}
                     mounted.append(name); pending.remove((path, manifest))
         except BaseException:
             for name in reversed(mounted): self.unmount(name)
@@ -63,7 +63,15 @@ class PluginRegistry:
         for tool in plugin['tools']: self.tools.pop(tool, None)
         for skill in plugin['skills']: self.skills.pop(skill, None)
 
+    def resolve_name(self, name):
+        if name in self.skills:return name
+        choices=[x['name'] for x in self.catalog() if name in (x['skill_name'],x['name'].rsplit('/',1)[0])]
+        if len(choices)==1:return choices[0]
+        if choices:raise ValueError('同名技能有多个版本，请使用完整名称选择：'+json.dumps(choices,ensure_ascii=False))
+        raise KeyError('未安装或未启用的技能：'+name)
+
     def read_skill(self, name):
+        name=self.resolve_name(name)
         source = self.skills[name]
         return json.dumps({'name':name, 'text':source.read_text(encoding='utf-8'),
                            'grants_permissions':False}, ensure_ascii=False)
@@ -73,10 +81,27 @@ class PluginRegistry:
         for name, source in self.skills.items():
             text = source.read_text(encoding='utf-8')
             # Metadata is descriptive data, never executable configuration.
-            description = re.search(r'^description:\s*(.+)$', text, re.MULTILINE)
-            entries.append({'name': name, 'description': description.group(1).strip().strip('\"\'')[:1000] if description else '',
-                            'grants_permissions': False})
+            from .skill_metadata import metadata
+            meta=metadata(text)
+            entries.append({'name':name,'skill_name':meta.get('name',name.rsplit('/',1)[0]),
+                            'description':meta.get('description','')[:1000],
+                            'source':self.loaded[name.split('/',1)[0]].get('source','未记录来源'),
+                            'grants_permissions':False})
         return entries
+
+    def list_page(self, query='', offset=0, limit=8):
+        if not isinstance(offset,int) or offset<0 or not isinstance(limit,int) or not 1<=limit<=20:raise ValueError('offset >= 0，limit 为 1 到 20')
+        catalog=self.catalog(); query=query.casefold().strip()
+        matches=[x for x in catalog if not query or query in (x['skill_name']+' '+x['description']+' '+str(x['source'])).casefold()]
+        page=[]
+        for entry in matches[offset:offset+limit]:
+            item={**entry,'description':entry['description'][:300]}
+            if page and len(json.dumps(page+[item],ensure_ascii=False).encode('utf-8'))>6500:break
+            page.append(item)
+        next_offset=offset+len(page)
+        return json.dumps({'skills':page,'total':len(catalog),'matched':len(matches),
+                           'next_offset':next_offset if next_offset<len(matches) else None,
+                           'dependency_status':'未知；目录未声明不等于无依赖，需读取 SKILL.md 并探测运行环境。'},ensure_ascii=False,indent=2)
 
 
 def install(agent):
@@ -85,12 +110,12 @@ def install(agent):
         registry.mount_all(json.loads(CONFIG.read_text(encoding='utf-8')).get('manifests', []))
     agent.plugins = registry
     agent._plugin_revision = CONFIG.stat().st_mtime_ns if CONFIG.exists() else 0
-    agent.tools['list_skills'] = AgentTool('list_skills', '列出宿主安装的技能，按需读取；技能不会授予额外权限。', _obj({}, []),
-        lambda: json.dumps({'skills':registry.catalog(), 'plugins':registry.loaded}, ensure_ascii=False))
+    agent.tools['list_skills'] = AgentTool('list_skills', '搜索或分页列出技能（默认 8 条）；按任务 query 搜索，更多结果使用 next_offset。完整内容用 read_skill。未声明依赖表示未知，不代表无需依赖。', _obj({'query':{'type':'string'},'offset':{'type':'integer','minimum':0},'limit':{'type':'integer','minimum':1,'maximum':20}}, []),
+        registry.list_page)
     agent.tools['read_skill'] = AgentTool('read_skill', '读取一个已安装技能；不能通过参数加载任意文件。',
         _obj({'name':{'type':'string'}}, ['name']), registry.read_skill)
     def read_file(name, path):
-        root = registry.skills[name].parent
+        root = registry.skills[registry.resolve_name(name)].parent
         source = (root/path).resolve(); source.relative_to(root)
         if source.stat().st_size > 100000: raise ValueError('技能参考文件超过 100 KB')
         return json.dumps({'path':path, 'text':source.read_text(encoding='utf-8'), 'grants_permissions':False}, ensure_ascii=False)

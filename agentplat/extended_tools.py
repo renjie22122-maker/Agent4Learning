@@ -51,6 +51,10 @@ def install_runtime_tools(agent):
         {'ref':string}, [], lambda ref='HEAD': create_worktree(agent.ws.root, ref), True)
     from . import approvals
     from .human_input import request_command
+    from .permission_recovery import request_execution
+    add('request_execution', '沙箱或环境确实无法完成必要操作时，请求精确宿主命令的单次授权；聊天中等待，获批后直接执行并返回结果。不会永久扩权。拒绝或取消后不执行；不得重放副作用未知的命令或绕过只读/项目范围限制。',
+        {'command':string, 'reason':string}, ['command','reason'],
+        lambda command, reason: request_execution(agent, command, reason), True)
     add('request_host_command', '当沙箱确实无法完成必要命令时，在聊天中请求批准精确宿主命令并等待答复。仅明确获批后可调用 run_approved_command，不轮询、不绕过禁止。',
         {'command':string, 'reason':string}, ['command','reason'],
         lambda command, reason: request_command(agent, command, reason))

@@ -27,8 +27,14 @@ def resume(demo, sid):
             demo.restore_agent_session(sid)
             entry = demo.live_sessions[sid]
         agent = entry[1]
-        return demo.continue_agent_task(
-            '继续当前未完成任务。先核对已有成果和最新要求，仅完成剩余工作；'
-            '不得盲目重复已经完成或结果未知的写入、命令及外部操作。若任务已完成，请说明结果。',
-            max_iters=budget.get('max_iters', agent.hard_iterations) or 0,
-            max_usd=budget.get('max_usd', agent.guard.max_usd), session_id=sid)
+        agent._resume_delivery = True
+        try:
+            return demo.continue_agent_task(
+                '继续当前未完成任务。先核对已有成果和最新要求，仅完成剩余工作；'
+                '不得盲目重复已经完成或结果未知的写入、命令及外部操作。若任务已完成，请说明结果。',
+                max_iters=budget.get('max_iters', agent.hard_iterations) or 0,
+                max_usd=budget.get('max_usd', agent.guard.max_usd), session_id=sid)
+
+        except BaseException:
+            agent._resume_delivery = False
+            raise

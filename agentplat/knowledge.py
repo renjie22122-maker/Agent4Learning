@@ -243,7 +243,8 @@ def snapshot(source, destination):
 
 def install_knowledge_tools(agent):
     from .agent_tools import AgentTool, _obj
-    kb = KnowledgeBase(agent.ws.knowledge_root)
+    from .knowledge_scopes import ScopedKnowledge
+    kb = ScopedKnowledge(agent.ws)
     def add(name, description, properties, required, fn):
         def invoke(**args):
             value = fn(**args)

@@ -5,13 +5,30 @@ from .runtime import workspace_digest
 from .reflection import ReflectionVerdict
 
 
+def restore_record(agent):
+    """Restore an identity, not approval; current files are checked on reuse."""
+    record=None
+    for event in agent.session.events:
+        if event.kind=='independent_review/started':record=dict(event.data)
+        elif event.kind=='independent_review/superseded':record=None
+    if record and hasattr(agent,'child_manager'):
+        try: agent.child_manager().get(record['agent_id'])
+        except (KeyError,ValueError): return
+        agent._independent_review=record
+        agent._acceptance_task=record.get('task',getattr(agent,'_task_text',''))
+
+
 def status(agent):
     record = getattr(agent, '_independent_review', None)
     if not record: return {'status':'not_started', 'note':'当前任务尚未启动独立验收'}
     state = agent.child_manager().get(record['agent_id'])
+    from .review_decision import assess
+    decision=assess(agent,record,state)
     return {**{k:state.get(k) for k in ('agent_id','status','verification_progress','summary','error')},
+            'host_decision':decision, 'passed':decision['accepted'],
+            'budget':{'limit_tokens':state.get('token_budget'), 'unlimited':state.get('token_budget')==0,'used_tokens':state.get('used_tokens')},
             'elapsed_seconds':round(max(0, time.time()-state.get('created_at',time.time())),1),
-            'note':'独立验收是宿主管理的 LLM 子任务；不属于作者工作团队，宿主等待期间不调用主模型。'}
+            'note':'status/summary 是验收子任务的执行状态与报告；最终是否通过以 host_decision.accepted 为准。limit_tokens=0 表示单次不设限，不表示耗尽。'}
 
 
 def status_question(text):
@@ -109,6 +126,11 @@ def retry(agent):
     if record and agent.child_manager().get(record['agent_id'])['status'] not in TERMINAL:
         raise RuntimeError('独立验收仍在运行，请等待或取消后重试')
     verdict = check(agent)
+    if verdict.allow:
+        agent._review_retry_ready=True
+        return {'agent_id':agent._independent_review['agent_id'],'passed':True,'reused':True,'instruction':'要求及产物未变，复用宿主已接受的验收，不重复运行。'}
+    if (getattr(agent,'_independent_review',None) or {}).get('decision',{}).get('code')=='existing_files_modified':
+        return {'agent_id':agent._independent_review['agent_id'],'passed':False,'instruction':verdict.instruction}
     if record and agent._independent_review == record and verdict.by != '独立验收等待':
         agent._previous_review = agent.child_manager().get(record['agent_id'])
         agent._independent_review = None
@@ -130,7 +152,8 @@ def check(agent):
     record = getattr(agent, '_independent_review', None)
     budget = max(0, int(getattr(getattr(agent, 'cfg', None), 'verification_token_budget', 0)))
     task_text = getattr(agent, '_acceptance_task', agent._task_text)
-    if not record or record['digest'] != digest or record.get('task', task_text) != task_text:
+    scope_key = getattr(agent.ws, 'knowledge_sources', None)
+    if not record or record['digest'] != digest or record.get('task', task_text) != task_text or record.get('knowledge_scopes') != scope_key:
         manager = agent.child_manager()
         previous = manager.get(record['agent_id']) if record else getattr(agent, '_previous_review', None)
         if record:
@@ -149,6 +172,8 @@ def check(agent):
                 '涉及知识库时必须通过 list_knowledge、search_knowledge、read_knowledge_chunk 直接读取宿主快照；作者转录的资料不能替代来源核对。'
                 '优先检查本次变更和必要依赖，不要遍历无关项目、日志或缓存。尽早运行一个最小测试，避免先写庞大测试套。'
                 '发现一个确定反例后立即报告，不需要继续扩充测试套。优先使用标准库直接运行一个测试脚本。'
+                '测试生成物必须写入 create_verification_scratch 返回的新目录或脚本自行创建的临时目录；不能覆盖任何已有交付文件（包括已有测试样例）。'
+                '若作者测试重写固定路径的已有文件，应报告具体路径并要求测试隔离，不得自行修复或宣称无条件通过。'
                 '验收计划必须针对承诺的输入范围设计反例：未限定元素类型的容器操作，检查不可哈希元素与跨类型相等；承诺精确数值的操作，检查超过库默认精度的数量级、正负抵消和舍入。'
                 '使用 Decimal、出现 set 或作者测试通过只是实现线索，不是这些边界已验证的证据。有限计划优先覆盖这种语义风险，不要用大量同类小整数样本替代。'
                 '发现缺陷应拒绝验收；测试不能运行时不得通过。最后调用 finish，summary 必须是纯 JSON：'
@@ -165,50 +190,21 @@ def check(agent):
                                        source_paths=list(getattr(agent, '_files_touched', [])))
         except RuntimeError as exc:
             return ReflectionVerdict(False, '无法启动独立验收：' + str(exc), '独立验收', True)
-        record = {'agent_id': identifier, 'digest': digest, 'token_budget': budget, 'task':task_text}
+        record = {'agent_id': identifier, 'digest': digest, 'token_budget': budget, 'task':task_text, 'knowledge_scopes':scope_key}
         agent._independent_review = record
         agent.session.append('independent_review/started', **record)
     result = agent.child_manager().get(record['agent_id'])
     if result['status'] not in TERMINAL:
         return ReflectionVerdict(False, '独立验收正在运行，宿主会挂起等待结果；无需反复调用 wait_agent 或 finish。', '独立验收等待')
-    if result.get('source_snapshot_intact') is False:
-        return ReflectionVerdict(False,'验收副本中的来源证据被修改，不能接受此结论。','独立验收受阻',True)
-    if any(item.get('missing') for item in result.get('source_snapshot', [])):
-        return ReflectionVerdict(False,'本次验收缺少交付引用的来源快照，无法核对；请恢复原始证据后重新验收。','独立验收受阻',True)
-    from .review_evidence import intact
-    if not intact(agent.ws.scope, result.get('source_snapshot', [])):
-        return ReflectionVerdict(False,'作者工作区的来源已改变，本次验收快照已过期；请重新验收。','独立验收受阻',True)
-    try:
-        verdict = json.loads(result.get('summary', ''))
-    except (ValueError, TypeError):
-        verdict = {}
-    if not isinstance(verdict, dict):
-        verdict = {}
-    passed = (result['status'] == 'completed' and verdict.get('verdict') == 'pass'
-              and isinstance(verdict.get('tests'), list) and bool(verdict['tests'])
-              and verdict.get('findings') == []
-              and not any(c.get('before') is not None for c in result.get('changes', []))
-              and any(e.get('exit_code') == 0 for e in result.get('evidence', [])))
-    # A workspace transcript cannot stand in for the host's original KB.
-    source_used = False
-    for event in getattr(agent.session, 'events', []):
-        if event.kind == 'followup/user': source_used = False
-        if event.kind == 'tool/call' and event.data.get('tool') in ('search_knowledge','read_knowledge_chunk','expanded_search_knowledge'):
-            source_used = True
-    if passed and source_used and not result.get('knowledge_reads'):
-        return ReflectionVerdict(False, '验收者未直接读取知识库来源；作者转录材料不能替代独立来源证据。', '独立验收受阻', True)
-    agent.session.append('independent_review/result', agent_id=record['agent_id'], passed=passed, digest=digest)
-    record['passed'] = passed
-    record['tests'] = verdict.get('tests', [])
-    if passed: return ReflectionVerdict.ok()
-    if result['status'] == 'completed' and verdict.get('verdict') in ('blocked','inconclusive'):
-        return ReflectionVerdict(False,'独立验收受阻，未判定交付通过或失败。'+json.dumps(verdict,ensure_ascii=False)[:2500],
-                                 '独立验收受阻',True)
-    if result['status'] == 'completed' and verdict.get('verdict') == 'fail' and verdict.get('findings'):
-        return ReflectionVerdict(False, '独立验收发现缺陷；根据证据修复后重新验证：' + json.dumps(verdict, ensure_ascii=False)[:2500],
-                                 '独立验收', agent._finish_rejects >= 2)
-    details = {k: result.get(k) for k in ('status', 'token_budget', 'used_tokens', 'error')}
-    return ReflectionVerdict(False, '独立验收未完成，不代表交付代码存在缺陷。' +
-                             '预算不足时调整设置中的验收预算后重新启动任务；可调用 retry_independent_review 重新验收原产物，无需修改代码。' +
-                             '不得把缺少验收结论当作验收通过。详情：' + json.dumps(details, ensure_ascii=False)[:2000],
-                             '独立验收未完成', agent._finish_rejects >= 2)
+    from .review_decision import assess
+    decision=assess(agent,record,result,digest)
+    if record.get('decision') != decision:
+        agent.session.append('independent_review/result',agent_id=record['agent_id'],
+                             passed=decision['accepted'],digest=digest,decision=decision)
+    record['decision']=decision
+    record['passed']=decision['accepted']
+    record['tests']=decision.get('tests',[])
+    if decision['accepted']:return ReflectionVerdict.ok()
+    label='独立验收' if decision['code']=='findings' else '独立验收受阻' if decision['code'] in {'review_blocked','source_missing','source_stale','source_modified','knowledge_not_read'} else '独立验收未完成'
+    exhausted = decision['code'] in {'existing_files_modified','review_blocked','source_missing','source_stale','source_modified','knowledge_not_read'} or agent._finish_rejects>=2
+    return ReflectionVerdict(False,decision['reason'],label,exhausted)

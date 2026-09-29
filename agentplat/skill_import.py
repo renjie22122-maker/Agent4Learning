@@ -83,7 +83,7 @@ def import_skill(source):
                 package = ROOT/name
                 shutil.copytree(main.parent, package)
                 manifest = package/'agent-plugin.json'
-                manifest.write_text(json.dumps({'name':name,'api_version':1,'version':'1','skills':['SKILL.md']}), encoding='utf-8')
+                manifest.write_text(json.dumps({'name':name,'api_version':1,'version':'1','skills':['SKILL.md'],'source':source.name+' / '+main.relative_to(staging).as_posix()}), encoding='utf-8')
                 current['manifests'].append(str(manifest)); imported.append(name)
             save(current)
         return {'imported':imported, 'scripts_executed':False, 'effective':'下一模型步骤或新任务'}
@@ -102,5 +102,11 @@ def set_enabled(name, enabled):
 
 def list_skills():
     enabled = {str(Path(p).resolve()) for p in config().get('manifests', [])}
-    return [{'name':p.parent.name, 'enabled':str(p.resolve()) in enabled,
-             'text':(p.parent/'SKILL.md').read_text(encoding='utf-8')} for p in ROOT.glob('*/agent-plugin.json')]
+    from .skill_metadata import metadata
+    result=[]
+    for p in ROOT.glob('*/agent-plugin.json'):
+        text=(p.parent/'SKILL.md').read_text(encoding='utf-8')
+        manifest=json.loads(p.read_text(encoding='utf-8'))
+        result.append({'name':p.parent.name,'enabled':str(p.resolve()) in enabled,'text':text,
+                       'source':manifest.get('source','未记录来源'),'skill_name':metadata(text).get('name',p.parent.name)})
+    return result

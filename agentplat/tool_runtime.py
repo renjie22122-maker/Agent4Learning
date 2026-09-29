@@ -65,6 +65,9 @@ class ToolRuntime:
             except Exception as exc:  # noqa: BLE001
                 out = f"[执行失败] {type(exc).__name__}: {exc}"
                 ok = False
+        if call_ok and not ok:
+            from .permission_recovery import guidance
+            out = str(out) + guidance(self, name, out)
         return out,ok,call_ok
 
     def _prepare_tool_batch(self, tool_calls, messages, it, emit, over_budget_steps):
