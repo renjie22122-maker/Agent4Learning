@@ -1,15 +1,17 @@
 ASSETS = r'''
 <style>
-.reply-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:-12px 0 28px}.reply-actions button,.copy-code{border:1px solid #34445b;border-radius:7px;padding:6px 9px;background:#192436;color:#b8c8e0;font-size:12px;cursor:pointer}.reply-actions button:hover,.reply-actions button[aria-pressed=true]{background:#314a76;color:#fff}.reply-notice{color:#afc8ef;font-size:12px}.branch-notice{padding:12px 14px;background:#1a2941;border:1px solid #3c5278;border-radius:10px;margin-bottom:20px;font-size:12px}.markdown pre{position:relative;padding-top:45px}.copy-code{position:absolute;top:8px;right:8px}.feedback-dialog{background:#1c2637;color:#e1e9f7;border:1px solid #4d6080;border-radius:14px;max-width:440px;width:85vw;padding:20px}.feedback-dialog::backdrop{background:#0009}.feedback-dialog textarea{width:100%;min-height:100px;margin:12px 0;background:#101827;color:#fff;border:1px solid #4d6080;padding:10px;box-sizing:border-box}.feedback-dialog button{padding:8px 14px;margin:6px;cursor:pointer}.feedback-dialog select{padding:8px;background:#152038;color:#fff}
+.reply-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:-12px 0 28px}.reply-actions button,.copy-code{border:1px solid #34445b;border-radius:7px;padding:6px 9px;background:#192436;color:#b8c8e0;font-size:12px;cursor:pointer}.reply-actions button:hover,.reply-actions button[aria-pressed=true]{background:#314a76;color:#fff}.reply-notice{color:#afc8ef;font-size:12px}.branch-notice{padding:12px 14px;background:#1a2941;border:1px solid #3c5278;border-radius:10px;margin-bottom:20px;font-size:12px}.chat .markdown pre{position:relative;padding-top:45px}.copy-code{position:absolute;top:8px;right:8px}.feedback-dialog{background:#1c2637;color:#e1e9f7;border:1px solid #4d6080;border-radius:14px;max-width:440px;width:85vw;padding:20px}.feedback-dialog::backdrop{background:#0009}.feedback-dialog textarea{width:100%;min-height:100px;margin:12px 0;background:#101827;color:#fff;border:1px solid #4d6080;padding:10px;box-sizing:border-box}.feedback-dialog button{padding:8px 14px;margin:6px;cursor:pointer}.feedback-dialog select{padding:8px;background:#152038;color:#fff}
 </style>
 <script>
 (()=>{
-const column=document.querySelector('#scroll .col'),sid=document.querySelector('#sendform [name=session]')?.value;
-if(!column||!sid)return;
-let votes={};const pending=new Set();
-async function post(path,fields){const token=document.querySelector('meta[name="conversation-token"]')?.content||'';const r=await fetch(path,{method:'POST',body:new URLSearchParams({session:sid,token,...fields})});const data=await r.json();if(!r.ok)throw Error(data.error||'操作失败');return data;}
+const column=document.querySelector('#scroll .col');
+if(!column)return;
+const session=()=>document.querySelector('#sendform [name=session]')?.value||'';
+let votes={},loadedSession='';const pending=new Set();
+async function post(path,fields){const sid=session();if(!sid)throw Error('当前对话尚未保存');const token=document.querySelector('meta[name="conversation-token"]')?.content||'';const r=await fetch(path,{method:'POST',body:new URLSearchParams({session:sid,token,...fields})});const data=await r.json();if(!r.ok)throw Error(data.error||'操作失败');return data;}
 async function copy(text){try{await navigator.clipboard.writeText(text);}catch(error){const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.append(area);area.select();const ok=document.execCommand('copy');area.remove();if(!ok)throw Error('浏览器未允许复制，请手动选择文本复制');}}
 function paint(){
+ const sid=session();if(sid&&sid!==loadedSession){loadedSession=sid;votes={};fetch('/api/reply-feedback?session='+encodeURIComponent(sid)).then(r=>{if(!r.ok)throw Error('反馈加载失败');return r.json();}).then(data=>{if(session()===sid){votes=data;paint();}}).catch(()=>{});}
  column.querySelectorAll('.reply-actions').forEach(row=>{const vote=votes[row.dataset.replyTurn]?.vote||'';row.querySelectorAll('[aria-pressed]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.replyAction===vote)));});
  column.querySelectorAll('.markdown pre').forEach(pre=>{if(pre.querySelector('.copy-code'))return;const code=pre.querySelector('code');const text=code?code.textContent:pre.textContent;const button=document.createElement('button');button.type='button';button.className='copy-code';button.textContent='复制代码';button.onclick=async()=>{try{await copy(text);button.textContent='已复制';}catch(e){button.textContent=e.message;}};pre.prepend(button);});
 }
@@ -44,7 +46,6 @@ column.addEventListener('click',async event=>{
  }catch(error){notice.textContent=error.message;}finally{pending.delete(turn);button.disabled=false;}
 });
 paint();new MutationObserver(paint).observe(column,{childList:true,subtree:true});
-fetch('/api/reply-feedback?session='+encodeURIComponent(sid)).then(r=>{if(!r.ok)throw Error('反馈加载失败');return r.json();}).then(data=>{votes=data;paint();}).catch(()=>{});
 })();
 </script>
 '''

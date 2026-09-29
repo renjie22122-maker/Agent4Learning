@@ -207,7 +207,7 @@ def build_agent_tools(ws: Workspace) -> dict[str, AgentTool]:
                 "必须调用这个工具，否则循环会继续。"
             ),
             parameters=_obj({
-                "summary": {"type": "string", "description": "做了什么、结果如何"},
+                "summary": {"type": "string", "description": "面向用户的最终交付：先给实际成果（代码任务给可复制的核心实现，较大项目给准确文件位置与使用方式），再给必要解释和简短验证结果。不能仅汇报做了什么。独立验收任务仍按其专用 JSON 协议输出。"},
                 "files_changed": {"type": "string", "description": "改了哪些文件"},
             }, ["summary"]),
             fn=finish,

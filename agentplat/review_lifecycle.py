@@ -19,8 +19,7 @@ class ReviewLifecycle:
             raise RuntimeError('验收通过后任务或产物发生变化，不能发布旧验收结果')
         result.acceptance = {k: record[k] for k in ('agent_id', 'digest', 'tests') if k in record}
         result.acceptance['status'] = 'passed'
-        result.summary = ('**宿主最终验收：通过**\n\n验收任务：`' + record['agent_id'] +
-                          '`。以下为作者提交验收前的总结；其中的验收状态以本条最终记录为准。\n\n' + author_summary)
+        result.summary = '**宿主最终验收：通过**\n\n' + author_summary
         self.session.append('delivery/finalized', acceptance=result.acceptance,
                             author_summary=author_summary)
 
