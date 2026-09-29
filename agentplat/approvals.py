@@ -114,4 +114,14 @@ def execute(agent, request_id):
     result['diagnostic'] = host_failure_guidance(result)
     agent.session.append('approval/result', request_id=request_id, status=result['status'], exit_code=result['exit_code'],
                          success=result['success'], execution_backend='host', cleanup_error=result.get('cleanup_error'))
+    if getattr(agent, 'verification_task', False):
+        from .runtime import Evidence, workspace_digest
+        agent.evidence = Evidence()
+        if result['success']:
+            agent.evidence = Evidence(row['command'], result['exit_code'], workspace_digest(agent.ws.scope))
+            agent.session.append('verification/evidence', command=row['command'],
+                                 exit_code=result['exit_code'], digest=agent.evidence.digest,
+                                 execution_backend='host', request_id=request_id,
+                                 workspace=str(agent.ws.root), independent=True)
+        agent._verified = agent.evidence.valid(agent.ws.scope)
     return result

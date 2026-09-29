@@ -49,17 +49,8 @@ def install_runtime_tools(agent):
     add('git_review', '查看当前工作区 Git 状态与已暂存/未暂存差异；不执行提交或推送。', {}, [], lambda: git_review(agent.ws.root))
     add('create_git_worktree', '从指定已存在提交创建独立 Git 工作区，用于并行任务。不会复制未提交修改，不推送。',
         {'ref':string}, [], lambda ref='HEAD': create_worktree(agent.ws.root, ref), True)
-    from . import approvals
-    from .human_input import request_command
-    from .permission_recovery import request_execution
-    add('request_execution', '沙箱或环境确实无法完成必要操作时，请求精确宿主命令的单次授权；聊天中等待，获批后直接执行并返回结果。不会永久扩权。拒绝或取消后不执行；不得重放副作用未知的命令或绕过只读/项目范围限制。',
-        {'command':string, 'reason':string, 'timeout_s':{'type':'number','minimum':1,'maximum':3600,'description':'执行时限，默认60秒；长任务应显式设置，将随命令提交用户确认。'}}, ['command','reason'],
-        lambda command, reason, timeout_s=60: request_execution(agent, command, reason, timeout_s), True)
-    add('request_host_command', '当沙箱确实无法完成必要命令时，在聊天中请求批准精确宿主命令并等待答复。仅明确获批后可调用 run_approved_command，不轮询、不绕过禁止。',
-        {'command':string, 'reason':string, 'timeout_s':{'type':'number','minimum':1,'maximum':3600}}, ['command','reason'],
-        lambda command, reason, timeout_s=60: request_command(agent, command, reason, timeout_s))
-    add('run_approved_command', '执行人类已批准的精确宿主命令；授权绑定当前会话与工作区，只能使用一次。',
-        {'request_id':string}, ['request_id'], lambda request_id: approvals.execute(agent, request_id), True)
+    from .permission_recovery import install_execution_tools
+    install_execution_tools(agent)
     task_id = {'task_id': string}
     agent_id = {'agent_id': string}
 

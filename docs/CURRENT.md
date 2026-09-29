@@ -30,6 +30,8 @@
 每次宿主执行返回执行后端、是否成功、后续普通命令后端和诊断说明。
 超时不能仅凭退出码 0 判成功；清理失败保留已观察的命令结果。
 验收累计 token 和耗时是整个子任务的量，不能归到最后一次模型请求。
+验收子 Agent 在允许命令的项目中可单独申请精确宿主命令授权；审批显示在主对话，
+执行与证据属于验收副本。不能复用作者授权，拒绝或环境仍不可用则保持 blocked。
 
 ## 验证入口与本次结果
 
@@ -43,11 +45,11 @@ python verify.py --ann lab-53
 python verify.py --native lab-30 lab-31 lab-32 --jobs 1
 ```
 
-本次宿主执行改动的相关回归为 **91 项通过**，命令如下。这是选定模块的回归，
+本次宿主执行与验收授权改动的相关回归为 **102 项通过**，命令如下。这是选定模块的回归，
 不是全仓库所有测试，也不是本次重新跑过全部教学实验。
 
 ```powershell
-python -m unittest tools.test_host_environment tools.test_permission_recovery tools.test_review_hardening tools.test_human_workflow tools.test_approvals tools.test_runtime tools.test_runtime_contracts tools.test_quick_resume tools.test_review_decision tools.test_review_budget tools.test_review_convergence tools.test_chat_timeline tools.test_live_features -q
+python -m unittest tools.test_reviewer_execution tools.test_host_environment tools.test_permission_recovery tools.test_review_hardening tools.test_human_workflow tools.test_approvals tools.test_runtime tools.test_runtime_contracts tools.test_quick_resume tools.test_review_decision tools.test_review_budget tools.test_review_convergence tools.test_chat_timeline tools.test_live_features -q
 ```
 
 知识库和 Skill 另有对应回归：

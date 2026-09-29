@@ -6,6 +6,9 @@ from .agent_tools import AgentTool, _obj
 
 
 def install(agent, manager, owner):
+    if agent.ws.allow_shell:
+        from .permission_recovery import install_execution_tools
+        install_execution_tools(agent)
     def scratch():
         import tempfile
         path=Path(tempfile.mkdtemp(prefix='verification-',dir=agent.ws.root)).resolve()
@@ -13,6 +16,9 @@ def install(agent, manager, owner):
         return json.dumps({'path':agent.ws.rel(path),'purpose':'在新目录内创建测试输入与输出；不要覆盖已有交付文件。'},ensure_ascii=False)
     def environment():
         return json.dumps({'shell_allowed':agent.ws.allow_shell,'execution_mode':agent.ws.execution_mode,
+            'host_execution':{'available':'request_execution' in agent.tools,
+                'workspace':str(agent.ws.root),
+                'policy':'必要检查缺少环境时，可申请精确宿主命令的新单次授权；作者的批准不能复用。检查本验收副本，不修改交付文件；拒绝后报告 blocked。'},
             'knowledge_tools':[k for k in agent.tools if 'knowledge' in k],
             'test_output_policy':'create_verification_scratch 创建独立测试目录。已有测试若会重写固定样例，应报告路径并要求改用临时目录；不能忽略文件修改来放行。',
             'knowledge_source':'宿主提供的任务知识库快照；用 read_knowledge_chunk 核实原始分块，作者转录文件不是独立来源。',
@@ -21,7 +27,7 @@ def install(agent, manager, owner):
             'browser_tools':[k for k in agent.tools if k.startswith('browser_')],
             'configured_browser_backend':(Path(__file__).resolve().parents[1]/'.agent-runtime/browser-policy.json').exists(),
             'host_path_probes':{k:bool(shutil.which(k)) for k in ('node','python','deno','bun')},
-            'note':'宿主 PATH 探测不保证沙箱命令可用；网页请优先使用浏览器工具。环境不足报告 blocked，不要自制解释器。'},ensure_ascii=False)
+            'note':'宿主 PATH 探测不保证沙箱命令可用；网页请优先使用浏览器工具。环境不足先区分沙箱限制与宿主状态；有授权工具时可申请必要检查，未获批或不可用则报告 blocked，不要自制解释器。'},ensure_ascii=False)
     def progress(stage,checks,blockers=''):
         with manager.lock:
             manager.tasks[owner]['data']['verification_progress']={'stage':stage,'checks':checks,'blockers':blockers}

@@ -46,3 +46,25 @@ def host_failure_guidance(result):
     if result.get('cleanup_error'):
         return '命令结果已保留，但宿主临时资源清理失败；这是执行器问题，不是被调用软件损坏的证据。'
     return '这是宿主执行结果。根据具体错误区分缺依赖、配置缺失、权限和代码错误；不能从沙箱结果推断宿主环境。'
+
+
+def install_execution_tools(agent):
+    """Shared approval surface; registration never grants execution authority."""
+    import json
+    from .agent_tools import AgentTool, _obj
+    string = {'type': 'string'}
+    def add(name, description, properties, required, fn, writes=False):
+        def invoke(**args):
+            return json.dumps(fn(**args), ensure_ascii=False)
+        agent.tools[name] = AgentTool(name, description, _obj(properties, required), invoke, writes)
+    from . import approvals
+    from .human_input import request_command
+    from .permission_recovery import request_execution
+    add('request_execution', '沙箱或环境确实无法完成必要操作时，请求精确宿主命令的单次授权；聊天中等待，获批后直接执行并返回结果。不会永久扩权。拒绝或取消后不执行；不得重放副作用未知的命令或绕过只读/项目范围限制。',
+        {'command':string, 'reason':string, 'timeout_s':{'type':'number','minimum':1,'maximum':3600,'description':'执行时限，默认60秒；长任务应显式设置，将随命令提交用户确认。'}}, ['command','reason'],
+        lambda command, reason, timeout_s=60: request_execution(agent, command, reason, timeout_s), True)
+    add('request_host_command', '当沙箱确实无法完成必要命令时，在聊天中请求批准精确宿主命令并等待答复。仅明确获批后可调用 run_approved_command，不轮询、不绕过禁止。',
+        {'command':string, 'reason':string, 'timeout_s':{'type':'number','minimum':1,'maximum':3600}}, ['command','reason'],
+        lambda command, reason, timeout_s=60: request_command(agent, command, reason, timeout_s))
+    add('run_approved_command', '执行人类已批准的精确宿主命令；授权绑定当前会话与工作区，只能使用一次。',
+        {'request_id':string}, ['request_id'], lambda request_id: approvals.execute(agent, request_id), True)
