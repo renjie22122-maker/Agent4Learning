@@ -22,6 +22,8 @@ def install_runtime_tools(agent):
                 total_tokens=int(os.environ['AGENTLAB_SUBAGENT_TOKENS'])
                 if os.environ.get('AGENTLAB_SUBAGENT_TOKENS') else (agent.cfg.subagent_total_tokens or None))
         agent.children.run_deadline = getattr(agent, 'run_deadline', None)
+        from .runtime import effective_policy
+        agent.children.authority_provider = lambda: effective_policy(agent)
         return agent.children
 
     def encoded(fn):
@@ -30,12 +32,17 @@ def install_runtime_tools(agent):
         return invoke
 
     agent.child_manager = manager
+    from .team_planner import install as install_planner
+    install_planner(agent, manager)
 
     def add(name, description, fields, required, fn, destructive=False):
         agent.tools[name] = AgentTool(name, description, _obj(fields, required), encoded(fn), destructive)
 
     string = {'type': 'string'}
     from .independent_review import retry as retry_review
+    from .independent_review import status as review_status
+    add('get_review_status', '读取宿主独立验收的真实 ID、状态、进度、耗时与结论；无需猜测或扫描历史缓存。',
+        {}, [], lambda: review_status(agent))
     add('retry_independent_review', '重新验收原产物；沿用用户配置的验收预算，保留上次记录。只在验收中断或失败原因已解决后调用，禁止盲目反复重试。',
         {}, [], lambda: retry_review(agent))
     from .git_workflow import review as git_review, create_worktree
@@ -57,8 +64,9 @@ def install_runtime_tools(agent):
             raise RuntimeError('工作区不允许 shell')
         agent.ws.check_command(command)
         cmd, shell = agent.ws.execution_command(command)
+        from .execution_environment import task_environment
         return {'task_id': agent.ws.processes.start(cmd, agent.ws.root, timeout_s=timeout_s,
-            shell=shell, env=dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONUTF8='1'),
+            shell=shell, env=task_environment(),
             cleanup_command=agent.ws.execution_cleanup(cmd),
             native_workspace=agent.ws.root if agent.ws.execution_mode == 'native' else None,
             native_network=agent.ws.native_network)}
@@ -115,7 +123,7 @@ def install_runtime_tools(agent):
         # Authority is checked inside the broker on every request, including redirects.
         return store.fetch(**args)
     add('fetch_url', '按宿主网页访问模式读取公开网页；公开模式无需逐域名授权，禁止内网地址，模型不能修改权限。',
-        {'url': string, 'max_bytes': {'type': 'integer', 'minimum': 1, 'maximum': 200000},
+        {'url': string, 'allow_truncated': {'type':'boolean'}, 'max_bytes': {'type': 'integer', 'minimum': 1, 'maximum': 200000},
          'timeout_s': {'type': 'number', 'minimum': 1, 'maximum': 30}}, ['url'], fetch_authorized)
     def search_web(query):
         from urllib.parse import urlencode

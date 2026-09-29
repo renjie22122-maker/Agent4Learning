@@ -37,7 +37,7 @@ def render(demo, qs):
     <form method="post" action="/knowledge/import"><input type="hidden" name="token" value="{token}">
     <label>文件或目录的完整路径<input name="path" required style="width:70%" placeholder="D:\\资料\\项目文档"></label><button>导入并建立索引</button></form>
     <h2>向量检索</h2><p>{html.escape(json.dumps(index_status,ensure_ascii=False))}</p>
-    <p>本机 embedding，不上传资料。首次建立旧文档索引后，按关键词与语义向量融合检索。尚未索引或模型不可用时会明确显示降级。</p>
+    <p>本机 embedding，不上传资料。小库精确检索，达到 5 万向量后自动建立经召回校准的 HNSW；关键词与语义结果融合。尚未索引或模型不可用时会明确显示降级。</p>
     <form method="post" action="/knowledge/reindex"><input type="hidden" name="token" value="{token}"><button>补建当前知识库向量索引</button></form>
     {job_html}<h2>检索验证</h2><form method="get" action="/knowledge"><input name="q" value="{html.escape(qs.get('q',''), quote=True)}" placeholder="输入关键词或问题"><button>检索</button></form>
     {results}<h2>已导入文档（{len(documents)}）</h2><table><thead><tr><th>原件</th><th>格式</th><th>分块</th><th>提取提示</th><th>操作</th></tr></thead><tbody>{''.join(rows)}</tbody></table>

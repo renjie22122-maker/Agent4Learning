@@ -5,6 +5,53 @@ from .runtime import workspace_digest
 from .reflection import ReflectionVerdict
 
 
+def status(agent):
+    record = getattr(agent, '_independent_review', None)
+    if not record: return {'status':'not_started', 'note':'当前任务尚未启动独立验收'}
+    state = agent.child_manager().get(record['agent_id'])
+    return {**{k:state.get(k) for k in ('agent_id','status','verification_progress','summary','error')},
+            'elapsed_seconds':round(max(0, time.time()-state.get('created_at',time.time())),1),
+            'note':'独立验收是宿主管理的 LLM 子任务；不属于作者工作团队，宿主等待期间不调用主模型。'}
+
+
+def status_question(text):
+    import re
+    # Exact, conservative queries only; never discard new requirements.
+    labels = {'!', '！', '等待独立验收', '宿主正在等待验收结果',
+              '验收通过且要求及文件未变时直接收尾，不额外调用主模型。'}
+    text = '\n'.join(line for line in text.splitlines() if line.strip() not in labels)
+    value = re.sub(r'[\s？?！!。,.，]', '', text)
+    return value in {'谁在验收','你在等谁验收','在等谁','验收进度','验收状态','还在验收吗','宿主是谁','验收到哪了'}
+
+
+def partition_steering(agent, incoming, notify=lambda:None):
+    changes = []
+    for message in incoming:
+        if getattr(agent, '_independent_review', None) and status_question(message):
+            agent.session.append('independent_review/status', question=message, result=status(agent))
+            notify()
+        else: changes.append(message)
+    return changes
+
+
+def retire(agent, reason):
+    record = getattr(agent, '_independent_review', None)
+    if not record: return
+    if not hasattr(agent, 'child_manager'):
+        agent._independent_review = None
+        return
+    from .subagents import TERMINAL
+    manager = agent.child_manager()
+    previous = manager.get(record['agent_id'])
+    if previous['status'] not in TERMINAL:
+        manager.cancel(record['agent_id'])
+    agent._previous_review = previous
+    agent.session.append('independent_review/archived', agent_id=record['agent_id'],
+                         status=previous['status'], summary=previous.get('summary',''), error=previous.get('error',''))
+    agent.session.append('independent_review/superseded', agent_id=record['agent_id'], reason=reason)
+    agent._independent_review = None
+
+
 def validate_verdict(agent, args):
     """A blocked review may finish honestly without a successful test command."""
     try:
@@ -28,17 +75,24 @@ def wait_pending(agent, notify=lambda:None):
     """Suspend the author while the reviewer runs; wake for user steering/cancel."""
     record = getattr(agent, '_independent_review', None)
     if not record: return []
+    if 'task' in record and record['task'] != getattr(agent, '_acceptance_task', getattr(agent, '_task_text', '')) and record.get('digest') != 'superseded':
+        retire(agent, '用户要求已改变')
+        return []
     from .subagents import TERMINAL
     manager = agent.child_manager()
     if manager.get(record['agent_id'])['status'] in TERMINAL: return []
-    started=time.monotonic();notify()
+    started=time.monotonic();notify(); last_notify=started
     while True:
         if agent.stop_flag is not None and agent.stop_flag.is_set(): return []
         if hasattr(manager,'coordination') and manager.coordination.pending('root'): return []
         if agent.steering:
             incoming=agent.steering()
-            if incoming:return incoming
+            if incoming:
+                changes = partition_steering(agent, incoming, notify)
+                if changes:return changes
         state=manager.get(record['agent_id'])
+        if time.monotonic()-last_notify >= 10:
+            notify(); last_notify=time.monotonic()
         if state['status'] in TERMINAL:
             seconds=round(time.monotonic()-started,3)
             agent._review_wait_notice='独立验收已结束；实际等待 '+str(seconds)+' 秒。'+json.dumps(
@@ -75,9 +129,18 @@ def check(agent):
     digest = workspace_digest(agent.ws.scope)
     record = getattr(agent, '_independent_review', None)
     budget = max(0, int(getattr(getattr(agent, 'cfg', None), 'verification_token_budget', 0)))
-    if not record or record['digest'] != digest or record.get('task', agent._task_text) != agent._task_text:
+    task_text = getattr(agent, '_acceptance_task', agent._task_text)
+    if not record or record['digest'] != digest or record.get('task', task_text) != task_text:
         manager = agent.child_manager()
         previous = manager.get(record['agent_id']) if record else getattr(agent, '_previous_review', None)
+        if record:
+            retire(agent, '要求或产物已改变')
+        # A cancelled reviewer may still be leaving its model call. Do not overlap replacements.
+        stale = [t['data'] for t in getattr(manager,'tasks',{}).values()
+                 if t['data'].get('purpose') == 'verification' and t['data']['status'] not in TERMINAL]
+        if stale:
+            agent._independent_review = {'agent_id':stale[0]['agent_id'], 'digest':'superseded', 'task':''}
+            return ReflectionVerdict(False,'正在等待旧验收取消完成，随后按新要求验收。','独立验收等待')
         task = ('你是独立验收者。只根据以下用户要求及工作区实际内容验证，不接收作者自评。'
                 '先用 verification_environment 查看可用工具，report_verification_progress 记录一个围绕本次变更的有限验收计划。'
                 '完成计划中的检查即可提交结论，不要无限增加测试面。网页 UI 优先用 browser_preview、browser_click、browser_check 在真实浏览器验证。'
@@ -90,20 +153,29 @@ def check(agent):
                 '使用 Decimal、出现 set 或作者测试通过只是实现线索，不是这些边界已验证的证据。有限计划优先覆盖这种语义风险，不要用大量同类小整数样本替代。'
                 '发现缺陷应拒绝验收；测试不能运行时不得通过。最后调用 finish，summary 必须是纯 JSON：'
                 '{"verdict":"pass/fail/blocked/inconclusive","findings":["具体证据"],"tests":["实际执行的检查"],"reason":"受阻或不确定的原因"}。'
-                'pass 时 findings 必须是空数组，正面观察和通过的证据写入 tests；fail 时 findings 写具体缺陷。报告受阻不要求成功执行命令，不等于交付有缺陷。\n用户要求：\n' + agent._task_text
+                '来源快照 missing 是平台证据不足，应报告 blocked，不应认定作者没有原文。不要把 PATH 查不到工具当作宿主无硬件。'
+                'pass 时 findings 必须是空数组，正面观察和通过的证据写入 tests；fail 时 findings 写具体缺陷。报告受阻不要求成功执行命令，不等于交付有缺陷。\n用户要求：\n' + task_text
                 + '\n本次变更路径（只作定位线索，不是正确性证据）：\n' + json.dumps(getattr(agent, '_files_touched', []), ensure_ascii=False))
         if previous and previous.get('status') == 'completed':
             task += '\n宿主保存的上次独立验收结论（非作者自评）：\n' + previous.get('summary','')[:6000] + '\n这是修复复验：优先复现上次反例并验证修复，再运行必要回归；不要从头重建整套测试。'
         try:
-            identifier = manager.spawn(task, mode='isolated', token_budget=budget, purpose='verification')
+            identifier = manager.spawn(task, mode='isolated', token_budget=budget, purpose='verification',
+                                       source_paths=list(getattr(agent, '_files_touched', [])))
         except RuntimeError as exc:
             return ReflectionVerdict(False, '无法启动独立验收：' + str(exc), '独立验收', True)
-        record = {'agent_id': identifier, 'digest': digest, 'token_budget': budget, 'task':agent._task_text}
+        record = {'agent_id': identifier, 'digest': digest, 'token_budget': budget, 'task':task_text}
         agent._independent_review = record
         agent.session.append('independent_review/started', **record)
     result = agent.child_manager().get(record['agent_id'])
     if result['status'] not in TERMINAL:
         return ReflectionVerdict(False, '独立验收正在运行，宿主会挂起等待结果；无需反复调用 wait_agent 或 finish。', '独立验收等待')
+    if result.get('source_snapshot_intact') is False:
+        return ReflectionVerdict(False,'验收副本中的来源证据被修改，不能接受此结论。','独立验收受阻',True)
+    if any(item.get('missing') for item in result.get('source_snapshot', [])):
+        return ReflectionVerdict(False,'本次验收缺少交付引用的来源快照，无法核对；请恢复原始证据后重新验收。','独立验收受阻',True)
+    from .review_evidence import intact
+    if not intact(agent.ws.scope, result.get('source_snapshot', [])):
+        return ReflectionVerdict(False,'作者工作区的来源已改变，本次验收快照已过期；请重新验收。','独立验收受阻',True)
     try:
         verdict = json.loads(result.get('summary', ''))
     except (ValueError, TypeError):

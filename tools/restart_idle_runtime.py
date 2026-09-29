@@ -22,7 +22,7 @@ def main():
     for _ in range(30):
         try:
             version=json.loads(get('/api/runtime'))['version']
-            print('Running',version);assert version=='runtime-17';return
+            print('Running',version);assert version=='runtime-20';return
         except (OSError,ValueError):time.sleep(.5)
     raise RuntimeError('启动后未确认健康状态')
 if __name__=='__main__':main()

@@ -106,8 +106,12 @@ class Tool:
 class ToolRegistry:
     """工具注册表 + 调用网关。所有安全与可靠性约束都在**这一层强制**。"""
 
-    def __init__(self, cfg=None) -> None:
+    def __init__(self, cfg=None, *, max_calls_per_request=12, ledger_path=None) -> None:
         self.cfg = cfg
+        self.max_calls_per_request = max(0, int(max_calls_per_request))
+        from pathlib import Path
+        from .operation_ledger import OperationLedger
+        self.ledger = OperationLedger(ledger_path or Path(__file__).resolve().parents[1]/'.agent-runtime/operations.sqlite3')
         self._tools: dict[str, Tool] = {}
         self._callbacks = BoundedCallbacks(8)
         self._key_locks = {}
@@ -146,8 +150,23 @@ class ToolRegistry:
         return sorted(self._tools)
 
     # -- 调用 ---------------------------------------------------------------
-    def call(self, name, args, ctx, request_id="", confirmed=False):
-        key = json.dumps([ctx.tenant_id, request_id or ctx.trace_id, name, args], sort_keys=True)
+    def call(self, name, args, ctx, request_id="", confirmed=False, logical_operation_id=None):
+        ctx.assert_valid()
+        if logical_operation_id is not None:
+            if not isinstance(logical_operation_id,str) or not logical_operation_id.strip():
+                raise ToolError('INVALID_ARGS','逻辑操作 ID 必须是宿主提供的非空字符串')
+            tool=self.get(name)
+            if tool.requires_roles and not (tool.requires_roles & ctx.roles):
+                raise ToolError('FORBIDDEN','当前身份无权访问该操作')
+            validate_schema(args,tool.parameters)
+            if tool.requires_confirmation and not confirmed:
+                raise ToolError('NEEDS_CONFIRMATION','当前操作仍需明确确认')
+            def execute():
+                result=self.call(name,args,ctx,request_id,confirmed)
+                if result.ref:self.ledger.save_reference(result.ref,self._refs[result.ref])
+                return result
+            return self.ledger.execute([ctx.tenant_id,ctx.user_id,name,logical_operation_id],args,execute)
+        key = json.dumps([ctx.tenant_id, ctx.user_id, request_id or ctx.trace_id, name, args], sort_keys=True)
         with self._lock:
             lock = self._key_locks.setdefault(key, threading.Lock())
         with lock:
@@ -171,7 +190,7 @@ class ToolRegistry:
         t0 = time.perf_counter()
         ctx.assert_valid()
         tool = self.get(name)
-        rid = request_id or ctx.trace_id
+        rid = json.dumps([ctx.tenant_id,ctx.user_id,request_id or ctx.trace_id])
 
         # 1) 迭代上限：防无限工具循环（工程硬编码，不问模型）
         with self._lock:
@@ -186,10 +205,10 @@ class ToolRegistry:
                     f"工具 {name} 在本次请求内已调用 {used[name] - 1} 次，"
                     f"超过上限 {tool.max_calls_per_request}：疑似循环，已拦截",
                 )
-            if total > 12:
+            if self.max_calls_per_request and total > self.max_calls_per_request:
                 self.duplicates_blocked += 1
                 self.m_dup.inc()
-                raise ToolError("LOOP_GUARD", f"本次请求工具调用总数 {total} 超过上限 12")
+                raise ToolError("LOOP_GUARD", f"本次请求工具调用总数 {total} 超过配置上限 {self.max_calls_per_request}")
 
         # 2) 权限：角色校验在工程层，不看模型怎么说
         if tool.requires_roles and not (tool.requires_roles & ctx.roles):
@@ -234,7 +253,8 @@ class ToolRegistry:
         # 6) 超时：用独立线程池，绝不让慢工具拖住主链路
         attempt = 0
         last: BaseException | None = None
-        while attempt <= tool.max_retries:
+        retries = 0 if tool.has_side_effects or not tool.idempotent else tool.max_retries
+        while attempt <= retries:
             attempt += 1
             try:
                 value = self._callbacks.call(
@@ -278,11 +298,14 @@ class ToolRegistry:
         )
 
     def read_result(self, ref: str, offset=0, max_chars=4000):
-        return self._refs[ref][offset:offset + max_chars]
+        text=self._refs[ref] if ref in self._refs else self.ledger.read_reference(ref)
+        return text[offset:offset + max_chars]
 
-    def new_request(self, request_id: str) -> None:
+    def new_request(self, request_id: str, ctx: RequestContext) -> None:
+        """Reset only the authenticated caller's request counters."""
+        ctx.assert_valid()
         with self._lock:
-            self._calls.pop(request_id, None)
+            self._calls.pop(json.dumps([ctx.tenant_id, ctx.user_id, request_id or ctx.trace_id]), None)
 
     def stats(self) -> str:
         return (

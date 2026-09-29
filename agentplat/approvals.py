@@ -63,7 +63,8 @@ def execute(agent, request_id):
     agent.session.flush('before_approved_host_command')
     supervisor = ProcessSupervisor()
     try:
-        key = supervisor.start(row['command'], agent.ws.root, shell=True, timeout_s=60)
+        from .execution_environment import task_environment
+        key = supervisor.start(row['command'], agent.ws.root, shell=True, timeout_s=60, env=task_environment())
         result = supervisor.wait(key, 60)
         if result['status'] == 'running': result = supervisor.wait(key, 5)
         agent.session.append('approval/result', request_id=request_id, status=result['status'], exit_code=result['exit_code'])

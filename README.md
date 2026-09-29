@@ -2,7 +2,7 @@
 
 **一个可以运行的 Agent 工程教学实验室，附真实模型执行内核。**
 
-包含 47 个默认实验与 3 个 Windows 原生隔离实验：每个实验都先让系统
+包含 50 个默认实验、1 个可选 ANN 实验与 3 个 Windows 原生隔离实验：每个实验都先让系统
 崩一次、打印出崩溃时的指标，再给出工程修复，最后用同一份负载跑对照组验证修复确实有效。
 实验指标来自固定负载与模拟模型，不能视为真实模型质量或生产认证。真实模型评估另行运行。
 
@@ -14,7 +14,7 @@
 
 ```bash
 # 核心教学实验使用 Python 3.11+ 标准库；可选集成另需依赖
-python verify.py                 # 47 个默认 lab；加 --native 包含 3 个 Windows 实测
+python verify.py                 # 50 个默认 lab；加 --native 包含 3 个 Windows 实测
 python -m labs.lab_06_layered_timeout   # 单独跑一个
 python -m agentplat.run          # 跑完整平台的多租户压测 + SLO 合规报告
 ```
@@ -22,6 +22,7 @@ python -m agentplat.run          # 跑完整平台的多租户压测 + SLO 合�
 启动本机网页界面：`python tools/start_desktop.py`，再在设置页面配置自己的模型 API。
 最新功能与验证边界见 [runtime-17 验证说明](docs/RUNTIME17_VALIDATION.md)、
 [聊天内确认](docs/HUMAN_INTERACTION_DESIGN.md) 和 [本地混合检索](docs/RAG_HYBRID.md)。
+验收等待、来源快照与联网修复见 [runtime-18 验证说明](docs/RUNTIME18_VALIDATION.md)。
 
 公开仓库仅包含源码、实验、测试工具和说明，不包含 API 凭据、聊天记录、附件、
 长期记忆、知识库、本地模型、用户工作区及原始运行日志。文档中的历史实测数据是
@@ -463,3 +464,5 @@ $env:PYTHONIOENCODING = "utf-8"
 
 用于学习与教学。代码里的模型价格、延迟、质量分是**近似值**，用于演示权衡关系，
 不要当作真实报价使用。
+
+检索、语义记忆、自动团队规划和模块化执行升级见 [runtime-20 说明](docs/RUNTIME20_UPGRADE.md)。`python verify.py --ann` 包含真实 HNSW 实验。

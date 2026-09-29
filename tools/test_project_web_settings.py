@@ -39,7 +39,7 @@ class ProjectWebSettings(unittest.TestCase):
         store.policy_provider = web_policy.policy
         web_policy.change('mode', 'public')
         for address in ['127.0.0.1', '10.0.0.1', '169.254.169.254', '::1']:
-            with patch('agentplat.sources.socket.getaddrinfo', return_value=[(2, 1, 6, '', (address, 80))]), patch('agentplat.sources.socket.create_connection') as connect:
+            with patch('agentplat.sources.socket.getaddrinfo', return_value=[(2, 1, 6, '', (address, 80))]), patch('agentplat.sources.socket.socket') as connect:
                 with self.assertRaises(PermissionError): store.fetch('http://example.com')
                 connect.assert_not_called()
         web_policy.change('mode', 'off')
@@ -51,7 +51,7 @@ class ProjectWebSettings(unittest.TestCase):
         store = SourceStore(self.root)
         states = iter([{'mode':'public','domains':[]}, {'mode':'off','domains':[]}])
         store.policy_provider = lambda: next(states)
-        with patch('agentplat.sources.socket.getaddrinfo', return_value=[(2,1,6,'',('93.184.216.34',80))]), patch('agentplat.sources.socket.create_connection'), patch('agentplat.sources.http.client.HTTPConnection') as connection:
+        with patch('agentplat.sources.socket.getaddrinfo', return_value=[(2,1,6,'',('93.184.216.34',80))]), patch('agentplat.sources.socket.socket'), patch('agentplat.sources.http.client.HTTPConnection') as connection:
             response = connection.return_value.getresponse.return_value
             response.status = 302
             response.getheader.return_value = 'http://other.example/page'

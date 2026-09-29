@@ -33,9 +33,10 @@ function localFile(relative) {
       } else {
         const result=await execFile(python,['-m','agentplat.browser_fetch',workspace,url.href],{cwd:project,windowsHide:true,timeout:12000,maxBuffer:3000000});
         const source=JSON.parse(result.stdout);
+        if(source.error) throw Error(source.error);
         await route.fulfill({status:200,body:Buffer.from(source.body,'base64'),contentType:source.content_type||'application/octet-stream'});
       }
-    } catch(error) { blocked.push(String(error.message).slice(-1000)); await route.abort(); }
+    } catch(error) { blocked.push(error.cmd ? 'BROKER_ERROR: transport process failed or timed out' : String(error.message).slice(0,1000)); await route.abort(); }
   });
   await context.routeWebSocket('**/*', socket=>socket.close());
   const page=await context.newPage(); page.setDefaultTimeout(15000);
@@ -73,7 +74,7 @@ function localFile(relative) {
       } else if(args.action!=='snapshot') throw Error('Unknown action');
       emit({url:page.url(),title:await page.title(),text:(await page.locator('body').innerText()).slice(0,20000),
             links:await page.locator('a').evaluateAll(xs=>xs.slice(0,100).map(x=>({text:x.innerText,url:x.href}))),blocked_requests:blocked.slice(0,20),untrusted_reference:true});
-    } catch(error) { emit({error:error.message,blocked_requests:blocked.slice(0,20)}); }
+    } catch(error) { emit({error:blocked.length ? blocked.join('; ').slice(0,3000) : error.message,blocked_requests:blocked.slice(0,20)}); }
   }
   await browser.close();
 })().catch(error=>{emit({error:error.message});process.exitCode=1;});

@@ -931,7 +931,8 @@ def make_handler(demo: DemoServer):
                 from .execution import execution_status
                 current_mode = demo._agent.ws.execution_mode if demo._agent else None
                 return self._json(200, {
-                    'version': 'runtime-17', **execution_status(current_mode),
+                    'version': 'runtime-20', **execution_status(current_mode),
+                    'review_status_tool': True, 'review_source_snapshot': True, 'ipv6_transport': True,
                     'chat_human_input': True, 'verification_knowledge_snapshot': True,
                     'local_vector_rag': bool(__import__('agentplat.vector_knowledge',fromlist=['config']).config()),
                     'chat_attachments': True, 'direct_settings_links': True,

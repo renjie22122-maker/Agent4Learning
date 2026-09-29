@@ -71,6 +71,9 @@ class ProcessSupervisor:
         self.lock = threading.RLock()
 
     def start(self, command, cwd, *, timeout_s=30, shell=False, env=None, cleanup_command=None, native_workspace=None, native_network='deny'):
+        if os.name == 'nt' and (shell or native_workspace is not None):
+            from .windows_command import prepare
+            command = prepare(command)
         if not 0 < timeout_s <= 3600:
             raise ValueError('进程超时必须在 (0, 3600] 秒')
         with self.lock:

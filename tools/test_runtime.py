@@ -39,6 +39,7 @@ class RuntimeTests(unittest.TestCase):
         digest = hashlib.sha256(raw).hexdigest()
         path = store.root / (digest + '.txt')
         path.write_bytes(raw)
+        path.with_suffix('.json').write_text(json.dumps({'complete':True}), encoding='utf-8')
         claim = {'source_id': digest, 'quote': 'Company A'}
         self.assertTrue(store.validate_claims([claim], 1)['complete'])
         self.assertFalse(store.validate_claims([claim, claim], 2)['complete'])

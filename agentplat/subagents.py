@@ -64,10 +64,12 @@ class AgentManager:
         temporary.replace(path)
         self.changed.notify_all()
 
-    def spawn(self, task: str, *, context='', token_budget=None, mode='readonly', depends_on=None, acceptance='', purpose='work', parent_id=None):
+    def spawn(self, task: str, *, context='', token_budget=None, mode='readonly', depends_on=None, acceptance='', purpose='work', parent_id=None, source_paths=None, source_agent=None):
         if not task.strip() or mode not in ('readonly', 'isolated'):
             raise ValueError('任务不能为空；mode 必须为 readonly 或 isolated')
         with self.lock:
+            if source_agent and (purpose!='verification' or source_agent not in self.tasks or self.tasks[source_agent]['data']['status']!='completed' or not self.tasks[source_agent].get('agent')):
+                raise ValueError('验收来源必须是已完成且仍有副本的当前任务')
             parent = self.tasks[parent_id] if parent_id else None
             depth = parent['data'].get('depth', 1) + 1 if parent else 1
             if depth > self.max_depth:
@@ -93,7 +95,8 @@ class AgentManager:
             data = dict(agent_id=agent_id, task=task, context=context, mode=mode,
                         status='queued', token_budget=token_budget, used_tokens=0,
                         summary='', evidence=[], error='', messages=[], created_at=time.time(),
-                        depends_on=depends_on, acceptance=acceptance, purpose=purpose, parent_id=parent_id, depth=depth)
+                        depends_on=depends_on, acceptance=acceptance, purpose=purpose, parent_id=parent_id, depth=depth,
+                        source_paths=source_paths, source_agent=source_agent)
             item = dict(data=data, cancel=threading.Event(), inbox=queue.Queue(maxsize=32), agent=None, branch=None)
             self.tasks[agent_id] = item
             self._save(item)
@@ -124,19 +127,16 @@ class AgentManager:
                 data['status'] = 'cancelled'
                 return
             from .loop import CodingAgent, Stop
-            from .llm import OpenAIChatClient
+            from .model_client import create_client, review_config
             from .workspace import Workspace
             from agentlab.tokens import count_tokens
             cfg = replace(self.cfg)
             if data.get('purpose') == 'verification':
-                cfg.memory_enabled = False
-                from urllib.parse import urlparse
-                if urlparse(cfg.base_url).hostname == 'api.deepseek.com':
-                    cfg.reasoning_effort = 'low'
+                cfg = review_config(cfg)
             # 输出额度预留在每次请求之前；供应商实际超额仍计入总账。
             limit = data['token_budget']
             cfg.max_tokens = min(cfg.max_tokens, max(128, limit // 4)) if limit else cfg.max_tokens
-            client = self.factory() if self.factory else OpenAIChatClient(cfg)
+            client = self.factory() if self.factory else create_client(cfg)
             # The loop and transport must share cancellation: stopping only at
             # step boundaries leaves an in-flight streaming request running.
             client.cancel_event = item['cancel']
@@ -174,6 +174,7 @@ class AgentManager:
                     return result
 
             parent_ws = self.tasks[data['parent_id']]['agent'].ws if data.get('parent_id') else self.workspace
+            if data.get('source_agent'):parent_ws=self.tasks[data['source_agent']]['agent'].ws
             root = parent_ws.scope
             if data['mode'] == 'isolated':
                 from .isolation import IsolatedChanges
@@ -181,6 +182,9 @@ class AgentManager:
                 root = item['branch'].root
                 data['isolation_root'] = {k:str(v) for k,v in root.items()} if isinstance(root,dict) else str(root)
                 data['isolation_base'] = item['branch'].base
+                if data.get('purpose') == 'verification':
+                    from .review_evidence import snapshot
+                    data['source_snapshot'] = snapshot(parent_ws.scope, root, data.get('source_paths'))
             ws = Workspace(root, allow_shell=data['mode'] == 'isolated' and parent_ws.allow_shell)
             # 副本只隔离编辑冲突；执行后端与权限继承父任务。
             ws.execution_mode = parent_ws.execution_mode
@@ -208,6 +212,8 @@ class AgentManager:
                                 policy=stopping, compaction_enabled=True, enable_subagents=False,
                                 steering=steering)
             agent.run_deadline = getattr(self, 'run_deadline', None)
+            from .runtime import effective_policy
+            agent.authority_provider = (lambda: effective_policy(self.tasks[data['parent_id']]['agent'])) if data.get('parent_id') else getattr(self, 'authority_provider', lambda:CapabilityPolicy())
             from .attachments import bind,metadata
             bind(agent,[metadata(i) for i in getattr(parent_ws,'attachment_source',lambda:set())()])
             # Auxiliary clients must not bypass the shared child token budget.
@@ -251,6 +257,9 @@ class AgentManager:
                                     session_path=str(agent.session.path))
                         if item['branch']:
                             data['changes'] = item['branch'].manifest()
+                            if data.get('purpose') == 'verification':
+                                from .review_evidence import intact
+                                data['source_snapshot_intact'] = intact(root, data.get('source_snapshot', []))
                         break
                 result = agent.continue_with(message)
         except Exception as exc:
@@ -480,6 +489,7 @@ class AgentManager:
 
     def close(self):
         self.closed = True
+        if hasattr(self,'planner'):self.planner.closed=True
         for agent_id in list(self.tasks):
             self.cancel(agent_id)
         self.pool.shutdown(wait=False)

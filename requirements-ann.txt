@@ -1,0 +1,2 @@
+# Optional local HNSW backend; install into the same Python runtime.
+faiss-cpu==1.12.0

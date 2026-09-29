@@ -8,6 +8,10 @@ from .web_policy import policy,allowed
 
 if __name__ == '__main__':
     store = SourceStore(Path(sys.argv[1])); store.policy_provider = policy
-    result = store.fetch(sys.argv[2], max_bytes=2_000_000, timeout_s=10)
-    raw = (Path(sys.argv[1])/result['path']).read_bytes()
-    print(json.dumps({'body':base64.b64encode(raw).decode(), 'content_type':result['content_type']}))
+    try:
+        result = store.fetch(sys.argv[2], max_bytes=2_000_000, timeout_s=10)
+        raw = (Path(sys.argv[1])/result['path']).read_bytes()
+        print(json.dumps({'body':base64.b64encode(raw).decode(), 'content_type':result['content_type']}))
+    except Exception as exc:
+        # Structured transport failures, never host traceback / executable paths.
+        print(json.dumps({'error':f'{type(exc).__name__}: {exc}'}))

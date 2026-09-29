@@ -624,7 +624,8 @@ class Workspace:
             self.commands_run += selected.commands_run
             self.audit.extend(selected.audit)
             return result
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        from .execution_environment import task_environment
+        env = task_environment()
         t0 = time.perf_counter()
         command, use_shell = self.execution_command(cmd)
         task_id = self.processes.start(command, workdir, timeout_s=max(1, timeout_s),

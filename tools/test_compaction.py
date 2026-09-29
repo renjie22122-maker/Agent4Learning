@@ -141,7 +141,7 @@ def main() -> int:
     c2 = Compactor(llm=fake, cfg=cfg, context_window=20_000)
     res2 = c2.maybe_compact(msgs2)
     ok &= check("确实触发了压缩", res2.applied, res2.reason)
-    ok &= check("调用了摘要模型", res2.summary_calls == 1, f"{res2.summary_calls} 次")
+    ok &= check("调用了摘要模型", res2.summary_calls == fake.calls and res2.summary_calls > 0, f"{res2.summary_calls} 次")
     ok &= check("摘要了老消息", res2.summarized > 0, f"{res2.summarized} 条")
     ok &= check("出现历史摘要消息",
                 any("历史摘要" in m.content for m in msgs2))

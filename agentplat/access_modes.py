@@ -12,7 +12,7 @@ def apply(agent, mode):
     agent.ws.trusted_host_commands = mode == 'full'
     agent.ws.allow_shell = mode != 'readonly'
     agent.ws.execution_mode = 'local' if mode == 'full' else agent._sandbox_mode
-    agent.capabilities = CapabilityPolicy(READ_TOOLS | {'request_user_input'}, False, False, False) if mode == 'readonly' else CapabilityPolicy()
+    agent.capabilities = CapabilityPolicy(READ_TOOLS | {'request_user_input','get_review_status'}, False, False, False) if mode == 'readonly' else CapabilityPolicy()
     agent.session.append('permission/applied', mode=mode)
 
 

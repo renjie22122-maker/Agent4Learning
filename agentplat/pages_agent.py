@@ -294,8 +294,8 @@ def agent_page(mgr, sessions: list[dict], active: dict | None,
 <div class=main>
   {_topbar(active, s, running, panel, ctx)}
   {_alert(error, notice)}
-  <div class=scroll id=scroll><div class=col>{_thread(active)}</div></div>
-  <div id="human-input" data-session="{esc((active or {}).get('session_id',''))}" style="max-height:40vh;overflow:auto" aria-live="polite"></div>
+  <div class=scroll id=scroll><div class=col>{_thread(active)}</div><div id="human-history" aria-label="交互记录"></div></div>
+  <div id="human-input" data-session="{esc((active or {}).get('session_id',''))}" aria-live="polite"></div>
   {_composer(active, running, mgr.current_group or ('__general__' if mgr.current == DEFAULT_WORKSPACE else ''))}
 </div>"""
     # 只有"跑着"的时候才自动刷新进度，否则每次看历史都会被整页刷新打断。

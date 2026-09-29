@@ -86,6 +86,9 @@ LABS: list[tuple[str, str, str]] = [
     ('lab-49-completion-audit', 'labs.lab_49_completion_audit', '完成声明与真实收尾'),
     ('lab-50-human-wait', 'labs.lab_50_human_wait', '聊天内等待回答'),
     ('lab-51-rag-source', 'labs.lab_51_rag_source', '验收原始知识来源'),
+    ('lab-52-durable-operations', 'labs.lab_52_durable_operations', '跨重启副作用去重'),
+    ('lab-54-semantic-memory', 'labs.lab_54_semantic_memory', '语义记忆与版本'),
+    ('lab-55-team-dag', 'labs.lab_55_team_dag', '团队依赖调度'),
 
 ]
 
@@ -313,8 +316,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=float, default=90.0)
     ap.add_argument("--show-fail", action="store_true", help="打印失败 lab 的输出尾部")
     ap.add_argument("--native", action="store_true", help="包含真实 Windows AppContainer 实验（需在允许创建身份的宿主运行）")
+    ap.add_argument('--ann', action='store_true', help='包含真实 FAISS HNSW 实验（需要 requirements-ann.txt）')
     args = ap.parse_args(argv)
     available = LABS + (NATIVE_LABS if args.native else [])
+    if args.ann:available += [('lab-53-ann-revocation','labs.lab_53_ann_revocation','ANN 撤销一致性')]
 
     if args.list:
         for lab_id, module, title in available:

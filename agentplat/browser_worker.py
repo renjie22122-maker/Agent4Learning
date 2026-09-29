@@ -77,7 +77,7 @@ def main():
                           'blocked_requests':blocked[:20], 'untrusted_reference':True}
                 print('BROWSER_RESULT ' + json.dumps(result), flush=True)
             except Exception as exc:
-                print('BROWSER_RESULT ' + json.dumps({'error':str(exc), 'blocked_requests':blocked[:20]}), flush=True)
+                print('BROWSER_RESULT ' + json.dumps({'error':'; '.join(blocked)[:3000] if blocked else str(exc), 'blocked_requests':blocked[:20]}), flush=True)
         browser.close()
 
 

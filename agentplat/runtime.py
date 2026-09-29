@@ -58,6 +58,14 @@ class CapabilityPolicy:
     allow_shell: bool = True
     allow_network: bool = False
 
+    def intersect(self, ceiling):
+        allowed = ceiling.allowed_tools if self.allowed_tools is None else self.allowed_tools
+        if self.allowed_tools is not None and ceiling.allowed_tools is not None:
+            allowed = self.allowed_tools & ceiling.allowed_tools
+        return CapabilityPolicy(allowed, self.allow_writes and ceiling.allow_writes,
+                                self.allow_shell and ceiling.allow_shell,
+                                self.allow_network and ceiling.allow_network)
+
     def check(self, name: str, *, writes=False, shell=False, network=False):
         if self.allowed_tools is not None and name not in self.allowed_tools:
             raise PermissionDenied(f"未授权工具：{name}")
@@ -67,6 +75,12 @@ class CapabilityPolicy:
             raise PermissionDenied("该任务未授予命令执行权限")
         if network and not self.allow_network:
             raise PermissionDenied("该任务未授予外网访问权限")
+
+
+def effective_policy(agent):
+    policy = agent.capabilities
+    provider = getattr(agent, 'authority_provider', None)
+    return policy.intersect(provider()) if provider else policy
 
 
 def invoke_checked(name, args, schema, fn, policy=None, *, writes=False,

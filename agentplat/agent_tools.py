@@ -82,7 +82,7 @@ def build_agent_tools(ws: Workspace) -> dict[str, AgentTool]:
 
     def finish(summary: str, files_changed: str = "") -> str:
         """终止任务。真正的"完成"由循环在收到这个调用时判定。"""
-        return f"任务结束。\n总结：{summary}\n改动文件：{files_changed or '（见工作区 diff）'}"
+        return f"完成申请已提交，是否完成以宿主验收结果为准。\n总结：{summary}\n改动文件：{files_changed or '（见工作区 diff）'}"
 
     tools = [
         AgentTool('read_chunk', '按字节分页回取大文件或 spill；next_offset 用于下一页。',

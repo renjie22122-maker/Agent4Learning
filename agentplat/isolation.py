@@ -5,7 +5,7 @@ import os
 import shutil
 import tempfile
 
-IGNORED = {'.git', '.sessions', '.spill', '.browser', '.agent-runtime', '__pycache__', '.pytest_cache'}
+IGNORED = {'.git', '.sessions', '.spill', '.sources', '.browser', '.agent-runtime', '__pycache__', '.pytest_cache'}
 
 
 def inventory(root):

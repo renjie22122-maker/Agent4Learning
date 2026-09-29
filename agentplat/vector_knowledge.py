@@ -56,6 +56,11 @@ class LocalEmbedder:
 def schema(db):
     db.execute('CREATE TABLE IF NOT EXISTS vectors (chunk_id TEXT, model TEXT, window INTEGER, dim INTEGER, vector BLOB, PRIMARY KEY(chunk_id,model,window))')
     db.execute('CREATE INDEX IF NOT EXISTS vectors_model ON vectors(model,chunk_id)')
+    db.execute('CREATE TABLE IF NOT EXISTS vector_epoch (id INTEGER PRIMARY KEY, value INTEGER)')
+    db.execute('INSERT OR IGNORE INTO vector_epoch VALUES (1,0)')
+    db.execute('CREATE TRIGGER IF NOT EXISTS vector_replace BEFORE INSERT ON vectors WHEN EXISTS (SELECT 1 FROM vectors WHERE chunk_id=NEW.chunk_id AND model=NEW.model AND window=NEW.window) BEGIN UPDATE vector_epoch SET value=value+1 WHERE id=1; END')
+    db.execute('CREATE TRIGGER IF NOT EXISTS vector_update BEFORE UPDATE ON vectors BEGIN UPDATE vector_epoch SET value=value+1 WHERE id=1; END')
+    db.execute('CREATE TRIGGER IF NOT EXISTS vector_delete BEFORE DELETE ON vectors BEGIN UPDATE vector_epoch SET value=value+1 WHERE id=1; END')
 
 
 def status(kb):
@@ -67,7 +72,7 @@ def status(kb):
         try: key=LocalEmbedder(settings).key
         except (OSError, KeyError):return {'enabled':True,'chunks':total,'indexed':0,'error':'本地模型未准备好'}
         count=db.execute('SELECT count(DISTINCT v.chunk_id) FROM vectors v JOIN chunks c ON c.id=v.chunk_id JOIN documents d ON d.id=c.document_id WHERE v.model=? AND d.active=1',(key,)).fetchone()[0]
-        return {'enabled':True,'model':'BGE local / CLS','chunks':total,'indexed':count,'method':'BM25 + cosine + RRF','index':'exact flat / bounded batches'}
+        return {'enabled':True,'model':'BGE local / CLS','chunks':total,'indexed':count,'method':'BM25 + cosine + RRF','index':('HNSW + exact delta' if __import__('agentplat.ann_index',fromlist=['manifest']).manifest(kb,key) else 'exact flat / bounded batches')}
 
 
 def build(kb, progress=None, embedder=None):
@@ -85,13 +90,31 @@ def build(kb, progress=None, embedder=None):
                 db.execute('INSERT OR REPLACE INTO vectors VALUES (?,?,?,?,?)',(rows[owner]['id'],model.key,window,len(vector),vector.tobytes()))
         done+=len(rows)
         if progress:progress(done)
-    return {'enabled':True,'indexed_now':done,'model_key':model.key}
+    ann=None
+    with kb.connect() as db:
+        count=db.execute('SELECT count(*) FROM vectors v JOIN chunks c ON c.id=v.chunk_id JOIN documents d ON d.id=c.document_id WHERE v.model=? AND d.active=1',(model.key,)).fetchone()[0]
+    if settings.get('ann_backend','auto')!='flat' and count>=int(settings.get('ann_min_vectors',50000)):
+        try:
+            from .ann_index import build as build_ann
+            ann=build_ann(kb,model.key)
+        except (ImportError,OSError,ValueError,RuntimeError) as exc:ann={'fallback':'exact','reason':type(exc).__name__}
+    return {'enabled':True,'indexed_now':done,'model_key':model.key,'ann':ann}
 
 
-def search(kb, query, limit=50, embedder=None):
+def search(kb, query, limit=50, embedder=None, exact=False, diagnostics=None):
     import numpy as np
     model=embedder or LocalEmbedder(config())
     queries=np.stack([v for _,v in model.encode([query],query=True)])
+    if not exact and config().get('ann_backend','auto')!='flat':
+        from .ann_index import manifest,search as ann_search
+        if manifest(kb,model.key):
+            try:
+                result=ann_search(kb,model.key,queries,limit)
+                if diagnostics is not None:diagnostics['backend']=('FAISS exact + delta' if manifest(kb,model.key).get('calibration',{}).get('search')=='exact_storage' else 'HNSW + exact delta')
+                return result
+            except (ImportError,OSError,ValueError,RuntimeError) as exc:
+                if diagnostics is not None:diagnostics['warning']='ANN 不可用，已使用精确检索：'+type(exc).__name__
+    if diagnostics is not None:diagnostics['backend']='exact cosine'
     best=[]
     with kb.connect() as db:
         schema(db)
@@ -118,7 +141,9 @@ def hybrid(kb, query, lexical, top_k):
         info=status(kb)
         if not info['indexed']:
             return {'hits':lexical[:top_k],'method':'lexical fallback','warning':'向量索引尚未建立，请在知识库页面建立索引','index':info,'untrusted_reference':True}
-        semantic=search(kb,query)
+        diagnostics={}
+        semantic=search(kb,query,diagnostics=diagnostics)
+        info.update(diagnostics)
     except Exception as exc:
         return {'hits':lexical[:top_k],'method':'lexical fallback','warning':'向量检索不可用：'+type(exc).__name__,'untrusted_reference':True}
     scores={};records={x['id']:x for x in lexical}
@@ -134,5 +159,5 @@ def hybrid(kb, query, lexical, top_k):
         hit['neighbors']=kb.neighbors(key)
         hits.append(hit)
     return {'hits':hits,'method':'BM25 + BGE cosine / RRF','index':info,
-            'warning':'向量索引不完整，未索引内容仍参与关键词检索' if info['indexed']<info['chunks'] else '',
+            'warning':info.get('warning','') or ('向量索引不完整，未索引内容仍参与关键词检索' if info['indexed']<info['chunks'] else ''),
             'untrusted_reference':True}

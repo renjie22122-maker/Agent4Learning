@@ -15,7 +15,7 @@ spill 压不住这个增长，因为它是**逐条**封顶，累积起来照样�
 1. **先剪枝**（`prune_tool_results`）：把老的大块工具输出换成占位符。
    **改历史但零 LLM 调用** —— 最便宜，所以先做。
 2. **不够再摘要**（`summarize`）：把最老的一段历史压成结构化 checkpoint，
-   保留近期原文。这一步要花一次模型调用。
+   保留近期原文。这一步按完整历史分段调用模型，并累计用量。
 3. **必须验证没丢关键信息**：摘要最容易的失败方式是"压得很干净，
    但把任务约束弄丢了"，然后 agent 开始跑偏。
 
@@ -231,9 +231,9 @@ class Compactor:
         # 用户补充的约束逐字保留，不依赖摘要模型记住它们。
         pinned = [m for m in old if m.role == 'user']
 
-        transcript = "\n".join(
-            f"{m.role}: {(m.content or '')[:1500]}" for m in old
-        )[:24_000]
+        import json
+        transcript = "\n".join(json.dumps(m.to_api(), ensure_ascii=False) for m in old)
+        chunks = [transcript[i:i+24000] for i in range(0,len(transcript),24000)]
         prompt = (
             "把下面这段 agent 工作记录压缩成结构化摘要，供后续继续工作使用。\n"
             "**只输出以下段落，每段都要有内容，不要省略任何一段**：\n"
@@ -246,42 +246,47 @@ class Compactor:
             "- 约束与要求：用户提出的硬性要求（必须保留，不得遗漏）。\n"
             "- 待办：还没做完的事。\n"
             "不要编造原文里没有的内容。\n\n"
-            f"=== 工作记录 ===\n{transcript}"
+            "=== 工作记录 ===\n"
         )
-        client = self.llm
-        from .llm import OpenAIChatClient
-        if isinstance(client, OpenAIChatClient):
-            from dataclasses import replace
-            client = OpenAIChatClient(replace(self.cfg, json_mode=False))
-        try:
-            text, usage = client.complete(
-                self.cfg.model_or("mid"), [ChatMessage("user", prompt)],
-                getattr(self.cfg, "timeout_s", 60.0),
-            )
-        except Exception:  # noqa: BLE001 - 摘要失败不能拖垮主循环
-            usage = getattr(client, 'last_usage', None)
-            if usage is not None:
-                from .billing import record
-                self.last_billing = record(self.cfg, usage, client=client, tag='compaction')
-                return 0, 1, self.last_billing['usd'], ['摘要正文未完成，保留原文；已返回的用量仍计费']
-            return None
-
-        missing = [s for s in SUMMARY_SECTIONS if not re.search(r'^\s*(?:#+\s*)?(?:\*\*)?' + re.escape(s) + r'[：:]', text, re.MULTILINE)]
-        if not text.lstrip().startswith(('任务目标：', '任务目标:', '# 任务目标', '**任务目标')):
-            missing.append('摘要必须从任务目标段落开始')
+        from .model_client import summary_client
         from .billing import record
-        self.last_billing = record(self.cfg, usage, client=client, tag='compaction')
-        usd = self.last_billing['usd']
+        client = summary_client(self.llm, self.cfg)
+        summaries, missing, bills = [], [], []
+        calls = 0
+        for index, chunk in enumerate(chunks):
+            calls += 1
+            part_prompt = prompt.split("=== 工作记录 ===",1)[0] + f"=== 工作记录 第 {index+1}/{len(chunks)} 段 ===\n{chunk}"
+            try:
+                text, usage = client.complete(self.cfg.model_or("mid"), [ChatMessage("user", part_prompt)],
+                                              getattr(self.cfg, "timeout_s", 60.0))
+            except Exception:
+                partial = getattr(client, 'last_usage', None)
+                if partial is not None:
+                    bills.append(record(self.cfg, partial, client=client, tag='compaction'))
+                missing.append('摘要调用失败，保留原文')
+                break
+            bills.append(record(self.cfg, usage, client=client, tag='compaction'))
+            missing += [name for name in SUMMARY_SECTIONS if not re.search(
+                r'^\s*(?:#+\s*)?(?:\*\*)?' + re.escape(name) + r'[：:]', text, re.MULTILINE)]
+            if not text.lstrip().startswith(('任务目标：','任务目标:','# 任务目标','**任务目标')):
+                missing.append('摘要必须从任务目标段落开始')
+            summaries.append(text)
+        if bills:
+            self.last_billing = dict(bills[-1])
+            for key in ('usd','usd_min','in_tokens','out_tokens','cached_tokens'):
+                self.last_billing[key] = sum(b.get(key,0) for b in bills)
+            self.last_billing['summary_batches'] = len(bills)
+        usd = sum(b['usd'] for b in bills)
+        if missing: return 0, calls, usd, missing
+        summary_msg = ChatMessage('assistant',
+            f'[历史摘要：已覆盖 {len(old)} 条历史的全部 {len(chunks)} 个分段；用户约束另按原文保留]\n' +
+            '\n\n'.join(summaries))
+        candidate = head_sys + pinned + [summary_msg] + tail
+        if count_messages(candidate) >= count_messages(messages):
+            return 0, calls, usd, ['摘要未节省上下文，保留原文']
+        messages[:] = candidate
+        return len(old), calls, usd, []
 
-        summary_msg = ChatMessage(
-            "assistant",
-            f"[历史摘要 —— 这是早前 {len(old)} 条对话的压缩结果，"
-            f"原文已移除以节省上下文]\n{text}",
-        )
-        if missing:
-            return 0, 1, usd, missing
-        messages[:] = head_sys + pinned + [summary_msg] + tail
-        return len(old), 1, usd, missing
 
 
 def verify_summary_keeps_facts(summary_text: str, facts: Sequence[str]) -> float:

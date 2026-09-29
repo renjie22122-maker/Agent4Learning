@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import socket
 import ssl
+import time
 from urllib.parse import urlsplit, urljoin
 
 
@@ -15,7 +16,11 @@ class SourceStore:
         self.root = Path(root) / '.sources'
         self.domains = frozenset(d.lower() for d in domains)
 
-    def fetch(self, url: str, max_bytes=200000, timeout_s=15):
+    def fetch(self, url: str, max_bytes=200000, timeout_s=15, allow_truncated=False):
+        if not 1 <= int(max_bytes) <= 10_000_000:
+            raise ValueError('max_bytes 必须在 1 到 10000000 之间')
+        max_bytes = int(max_bytes)
+        deadline = time.monotonic() + max(.1, float(timeout_s))
         self.domains = frozenset(self.domain_provider()) if hasattr(self, 'domain_provider') else self.domains
         original = url
         for _ in range(4):
@@ -30,15 +35,37 @@ class SourceStore:
             if not permitted:
                 raise PermissionError(f'当前网页访问设置不允许 {host}；请在 /permissions 选择“允许公开网页”或添加此网站')
             port = parts.port or (443 if parts.scheme == 'https' else 80)
-            addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            try:
+                addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            except socket.gaierror as exc:
+                raise RuntimeError('DNS_ERROR: 无法解析网站域名') from exc
             if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
                 raise PermissionError('禁止访问私网、回环或保留地址')
             # 使用已校验 IP 建连，避免检查后第二次 DNS 解析指向私网。
             connection = http.client.HTTPConnection(host, port, timeout=timeout_s)
-            connection.sock = socket.create_connection(addresses[0][4], timeout_s)
-            if parts.scheme == 'https':
-                connection.sock = ssl.create_default_context().wrap_socket(connection.sock, server_hostname=host)
             try:
+                errors = []
+                for family, socktype, proto, _, sockaddr in addresses:
+                    sock = None
+                    try:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0: raise TimeoutError('连接时间已耗尽')
+                        sock = socket.socket(family, socktype, proto)
+                        sock.settimeout(min(remaining, max(.1, timeout_s / len(addresses))))
+                        sock.connect(sockaddr)  # Exact validated address; no second DNS lookup.
+                        if parts.scheme == 'https':
+                            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+                        sock.settimeout(max(.1, deadline - time.monotonic()))
+                        connection.sock = sock
+                        break
+                    except ssl.SSLCertVerificationError as exc:
+                        if sock is not None: sock.close()
+                        raise RuntimeError('TLS_CERTIFICATE_ERROR: 证书链验证失败；需检查网站证书、代理与信任库，未关闭验证') from exc
+                    except OSError as exc:
+                        if sock is not None: sock.close()
+                        errors.append(type(exc).__name__)
+                else:
+                    raise RuntimeError('CONNECT_ERROR: 已校验地址均连接失败：' + ', '.join(errors))
                 connection.request('GET', (parts.path or '/') + ('?' + parts.query if parts.query else ''),
                                    headers={'User-Agent': 'Agent4Learning/1.0', 'Accept-Encoding': 'identity'})
                 response = connection.getresponse()
@@ -46,10 +73,12 @@ class SourceStore:
                     url = urljoin(url, response.getheader('Location', ''))
                     continue
                 if response.status != 200:
-                    raise RuntimeError(f'HTTP {response.status}')
+                    raise RuntimeError(f'HTTP_ERROR: HTTP {response.status}')
                 raw = response.read(max_bytes + 1)
-                if len(raw) > max_bytes:
-                    raise RuntimeError('响应超出大小上限，未将截断内容记为完整来源')
+                complete = len(raw) <= max_bytes
+                if not complete and not allow_truncated:
+                    raise RuntimeError('SIZE_LIMIT: 响应超出大小上限；可使用 allow_truncated=true 获取明确标注不完整的预览')
+                raw = raw[:max_bytes]
                 content_type = response.getheader('Content-Type', '')
             finally:
                 connection.close()
@@ -58,7 +87,7 @@ class SourceStore:
             (self.root / (digest + '.txt')).write_bytes(raw)
             metadata = dict(source_id=digest, requested_url=original, url=url,
                             fetched_at=datetime.now(timezone.utc).isoformat(), sha256=digest,
-                            content_type=content_type, bytes=len(raw), complete=True,
+                            content_type=content_type, bytes=len(raw), complete=complete,
                             path=f'.sources/{digest}.txt')
             (self.root / (digest + '.json')).write_text(json.dumps(metadata), encoding='utf-8')
             return {**metadata, 'untrusted_content': raw.decode('utf-8', 'replace')}
@@ -77,7 +106,11 @@ class SourceStore:
             quote = claim.get('quote', '')
             key = (source_id, quote)
             raw = path.read_bytes() if path.exists() else b''
-            if key in seen or hashlib.sha256(raw).hexdigest() != source_id or not quote or quote not in raw.decode('utf-8', 'replace'):
+            try:
+                meta = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                meta = {}
+            if not meta.get('complete') or key in seen or hashlib.sha256(raw).hexdigest() != source_id or not quote or quote not in raw.decode('utf-8', 'replace'):
                 unsupported.append(i)
             seen.add(key)
         return dict(expected_count=expected_count, actual_count=len(claims),

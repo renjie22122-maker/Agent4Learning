@@ -10,6 +10,8 @@ def install(agent, manager, owner):
         return json.dumps({'shell_allowed':agent.ws.allow_shell,'execution_mode':agent.ws.execution_mode,
             'knowledge_tools':[k for k in agent.tools if 'knowledge' in k],
             'knowledge_source':'宿主提供的任务知识库快照；用 read_knowledge_chunk 核实原始分块，作者转录文件不是独立来源。',
+            'source_snapshot':manager.get(owner).get('source_snapshot', []),
+            'source_note':'本次交付引用的网页落盘证据已按 SHA256 复制；仅供读取，修改证据会使验收无效。missing 表示平台未能提供证据，应报告 blocked，不要推断作者没有原文。',
             'browser_tools':[k for k in agent.tools if k.startswith('browser_')],
             'configured_browser_backend':(Path(__file__).resolve().parents[1]/'.agent-runtime/browser-policy.json').exists(),
             'host_path_probes':{k:bool(shutil.which(k)) for k in ('node','python','deno','bun')},

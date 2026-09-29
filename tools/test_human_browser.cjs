@@ -16,8 +16,14 @@ const {chromium}=require(path.join(policy.module_root,'playwright'));
   await page.getByRole('button',{name:'绿色',exact:true}).click();assert.equal(await page.locator('textarea').inputValue(),'绿色');assert.equal(await page.locator('img').count(),0);assert.equal(posted.length,0);
   questions.push({id:'q2',kind:'approval',payload:{reason:'子任务申请',command:'python -V',workspace:'fixture'},status:'pending',answer:''});
   await page.getByRole('button',{name:'允许这一次'}).waitFor();assert.equal(await page.locator('textarea').first().inputValue(),'绿色');assert.equal(posted.length,0);
-  await page.getByRole('button',{name:'提交回答并继续'}).click();await page.getByText('状态：已回答 绿色').waitFor();assert.equal(posted.length,1);assert.equal(posted[0].session,'fixture');assert.equal(posted[0].token,'fixture-token');assert.deepEqual(errors,[]);
+  await page.getByRole('button',{name:'提交回答并继续'}).click();await page.locator('#human-history .hi-answer').filter({hasText:'绿色'}).waitFor();assert.equal(posted.length,1);assert.equal(posted[0].session,'fixture');assert.equal(posted[0].token,'fixture-token');assert.deepEqual(errors,[]);
   assert.equal(await page.evaluate(()=>window.resumed),1);
+  const question=await page.locator('#human-history .hi-question').boundingBox();const answer=await page.locator('#human-history .hi-answer').boundingBox();assert(answer.y>question.y+question.height,'Answer must be below question');
+  assert.equal(await page.locator('#human-input .hi-card').count(),1);
+  await page.screenshot({path:path.join(path.dirname(process.argv[2]),'interaction-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Mobile horizontal overflow');
+  await page.screenshot({path:path.join(path.dirname(process.argv[2]),'interaction-mobile.png'),fullPage:true});
   console.log('PASS human chat cards: draft, no auto approval, safe text, one reply, stream resume');
  }finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -16,6 +16,7 @@ def main():
     sub.add_parser('list')
     sub.add_parser('reindex', help='增量建立本地 embedding 向量索引')
     sub.add_parser('index-status', help='显示向量索引覆盖率')
+    sub.add_parser('ann-rebuild', help='重建 HNSW，清除图中的旧版本和撤销条目；发布新索引代')
     sub.add_parser('remove').add_argument('document_id')
     sub.add_parser('open', help='在本机浏览器打开已认证的工作台入口')
     args = parser.parse_args()
@@ -30,6 +31,11 @@ def main():
         result = kb.search(args.query)
     elif args.command == 'list':
         result = kb.list_documents()
+    elif args.command == 'ann-rebuild':
+        from .vector_knowledge import build,LocalEmbedder,config
+        from .ann_index import build as build_ann
+        build(kb)
+        result=build_ann(kb,LocalEmbedder(config()).key,rebuild=True)
     elif args.command in ('reindex','index-status'):
         from .vector_knowledge import build, status
         result = build(kb) if args.command == 'reindex' else status(kb)
