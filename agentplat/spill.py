@@ -98,13 +98,22 @@ class SpillPolicy:
 
         # 落盘：用工具名 + 内容哈希做文件名，**同内容重复 spill 会复用**，
         # 避免 agent 反复读同一个大文件时把工作区塞满。
-        digest = hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         name = f"{tool}-{digest}.txt"
+        from .filesystem_contract import check_entry
+        check_entry(Path(self.workspace))
         self.dir.mkdir(parents=True, exist_ok=True)
+        check_entry(self.dir)
         target = self.dir / name
         reused = target.exists()
-        if not reused:
-            target.write_bytes(raw.encode("utf-8"))
+        if reused:
+            check_entry(target)
+            if target.read_bytes() != raw.encode('utf-8'):
+                raise ValueError('Spill cache content mismatch; refusing poisoned evidence')
+        else:
+            # Exclusive creation avoids overwriting a link planted at this name.
+            with target.open('xb') as stream:
+                stream.write(raw.encode('utf-8'))
 
         head_n = self.preview_bytes // 2
         tail_n = self.preview_bytes - head_n

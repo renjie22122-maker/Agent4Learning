@@ -3,7 +3,7 @@ import argparse,json,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from agentplat.benchmark import TASKS,grade,reliability,trace_metrics
+from agentplat.benchmark import TASKS,grade,reliability,trace_metrics,GRADER_VERSION
 from agentplat.evaluation_report import envelope, benchmark_cases
 
 
@@ -27,7 +27,7 @@ def worker(spec_path):
     attachments.ROOT=folder/'private-attachments'
     from agentplat.workspace import Workspace
     from agentplat.loop import CodingAgent
-    from agentplat.llm import OpenAIChatClient
+    from agentplat.model_client import create_client
     from agentplat.llmconfig import LLMConfig
     from agentplat.guard import CostGuard
     ws=Workspace(folder/'workspace')
@@ -48,7 +48,7 @@ def worker(spec_path):
     # Fail environment checks before spending on the model.
     ws.run('python -V',timeout_s=15)
     if not ws.last_execution or ws.last_execution.get('exit_code')!=0:raise RuntimeError('Sandbox preflight failed')
-    agent=CodingAgent(OpenAIChatClient(cfg),cfg,workspace=ws,guard=CostGuard(max_usd=None,max_calls=None),
+    agent=CodingAgent(create_client(cfg),cfg,workspace=ws,guard=CostGuard(max_usd=None,max_calls=None),
                       session_dir=folder/'sessions',hard_iterations=spec['max_steps'],enable_subagents=spec['review'])
     agent.independent_review_required=spec['review']
     initial_history=sum(e.kind.startswith(('conversation/','followup/','memory/recalled')) for e in agent.session.events)
@@ -66,6 +66,7 @@ def worker(spec_path):
     children=[t['data'] for t in agent.children.tasks.values()] if agent.children else []
     import hashlib
     row=dict(task=spec['task'],category=task['category'],repeat=spec['repeat'],passed=passed,declared_ok=result.ok,
+             grader_version=GRADER_VERSION,
              all_turns_completed=all(r.ok for r in results),turn_stop_reasons=[r.stopped_by for r in results],
              clean_start=True,history_events_before_run=initial_history,memory_root=str(folder/'private-memory'),knowledge_root=str(ws.knowledge_root),
              vector_index=vector_index,
@@ -75,7 +76,9 @@ def worker(spec_path):
              execution_mode=ws.execution_mode,parent_usd_estimate=sum(r.usd for r in results),
              child_usd_estimate=sum(x.get('usd',0) for x in children),
              child_tokens=sum(x.get('used_tokens',0) for x in children),
-             grader_details=details,metrics=trace_metrics(agent.session.events))
+             grader_details=details,metrics=trace_metrics(agent.session.events),
+             context_metrics=agent.context_stats(),
+             child_metrics=[trace_metrics(t['agent'].session.events) for t in agent.children.tasks.values() if t.get('agent')] if agent.children else [])
     row['total_usd_estimate']=row['parent_usd_estimate']+row['child_usd_estimate']
     row['review_profile']=cfg.review_profile
     row['projection']=agent.session.project_run()

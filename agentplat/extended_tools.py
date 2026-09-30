@@ -49,8 +49,6 @@ def install_runtime_tools(agent):
     add('git_review', '查看当前工作区 Git 状态与已暂存/未暂存差异；不执行提交或推送。', {}, [], lambda: git_review(agent.ws.root))
     add('create_git_worktree', '从指定已存在提交创建独立 Git 工作区，用于并行任务。不会复制未提交修改，不推送。',
         {'ref':string}, [], lambda ref='HEAD': create_worktree(agent.ws.root, ref), True)
-    from .permission_recovery import install_execution_tools
-    install_execution_tools(agent)
     task_id = {'task_id': string}
     agent_id = {'agent_id': string}
 

@@ -1,83 +1,104 @@
-# 当前项目说明
+# Current implementation
 
-本页对应当前工作树实现，核对日期为 2026-09-29。它是使用入口和能力边界索引，
-不是生产认证或综合能力评分。带版本号、日期的文档保留当时的观察，不追写历史成绩。
+Checked against the working tree on **2026-09-30**. This is a capability and limitation
+index, not a production certification. [Previous Chinese guide](CURRENT.zh-CN.md).
+Dated reports describe the version they inspected and remain historical records.
 
-## 启动与对话
+## Using the agent
 
-运行 `python tools/start_desktop.py`，在设置页面配置自己的 LLM API。
-`python -m agentplat.knowledge_cli open` 可重新打开本机登录入口。
-原生沙箱、浏览器、OCR、向量模型和第三方工具需要各自运行条件，安装 Skill 不会自动提供它们。
+Run `python tools/start_desktop.py`, configure the LLM endpoint in settings and use
+the authenticated local interface. English is the default UI language; the header
+selector switches to Chinese. Replies follow the user's language. Final answers
+present the deliverable directly, with host acceptance shown separately.
 
-普通对话不绑定项目，有独立附件与产物目录；需要执行本地命令时选择项目。
-项目支持多个不重叠文件夹。运行期间可追加提示，问题/授权卡按发生位置插入时间线，
-已回答记录可折叠。会话恢复、分支与文件快照仍有各自限制，见
-[对话分支](CONVERSATION-BRANCHES.md)、[交互时间线](CHAT-TIMELINE.md)。
+General chats have private artifact storage and no project shell privileges. Project
+chats can bind several non-overlapping folders. Follow-up messages and approval
+cards appear in the execution timeline; recovery does not blindly replay operations
+whose side effects are unknown.
 
-## 当前能力与对应实现
+## Capabilities and boundaries
 
-| 功能 | 使用和边界 | 源码入口 |
-|---|---|---|
-| 文档导入 | 文本、CSV、Office、PDF、图片 OCR；格式依赖和限制见 [知识库](KNOWLEDGE.md) | `agentplat/knowledge.py`、`document_extract.py` |
-| 知识库范围 | 会话私有、项目共享、公共库主动启用；取消选择不会清除既有聊天引用；见 [范围选择](KNOWLEDGE-SCOPES.md) | `agentplat/knowledge_scopes.py` |
-| 语义检索 | 本地 embedding + BM25/RRF；大库支持校准 HNSW，缺模型/索引时降级；见 [RAG](RAG_HYBRID.md) | `agentplat/vector_knowledge.py`、`ann_index.py` |
-| 多个 Skill | 目录/ZIP 导入、分页目录、多行描述、同名来源区分；加载成功不等于功能验证通过；见 [技能](SKILLS.md) | `agentplat/plugins.py`、`skill_metadata.py`、`skill_import.py` |
-| 权限恢复 | 精确命令单次审批，保留宿主正常运行变量，独立执行时限；不永久扩权；见 [权限恢复](PERMISSION-RECOVERY.md) | `agentplat/approvals.py`、`execution_environment.py` |
-| 多 Agent | 递归、团队消息与 DAG；独立验收继承选定知识库快照；不是已证明最优的自主委派 | `agentplat/subagents.py`、`team_planner.py` |
-| 完成判定 | 子任务 completed、过程 reporting 都不等于宿主通过；要求/产物/知识库范围改变使旧验收失效 | `agentplat/review_decision.py`、`independent_review.py` |
-| Spill | 大输出落盘、按内容复用、分段回读；尚无完整引用保护与自动过期回收 | `agentplat/spill.py` |
+| Area | Current implementation and limits |
+|---|---|
+| Model protocols | Chat Completions client split from protocol/error handling; native Responses, Anthropic and Gemini text/function tools. Opaque reasoning/signature data retained. Native streaming, vision and server-side tools are not implemented by these adapters. |
+| Task lifecycle | Explicit event projection and completion guards for pending questions and unknown side effects. This is not yet a single authoritative state engine replacing every subsystem. |
+| Sandboxing | Backend-specific boundary information; file inventories reject links/reparse points and hardlinks. Preflight checks do not prove resistance to a concurrent privileged attacker. Host-approved commands run outside the ordinary sandbox. |
+| Environment preparation | Versioned existing/venv/portable plans, exact-command approvals, probes, fingerprints and recoverable retirement. See [environment management](DEVELOPMENT-ENVIRONMENTS.md). |
+| Review | Requirement-bound finite plans, independent assumptions and source checks, revision-bound acceptance. No guarantee that model reviewers catch all defects. |
+| Team execution | Recursive workers, messages and DAG merge; common host verdict validation. A revised task must actually change its task/acceptance contract. Optimal delegation has not been demonstrated. |
+| Knowledge | Text/CSV/Office/PDF/OCR import; selected session/project/public scopes; hybrid retrieval and optional ANN. Real large-corpus answer quality remains an evaluation task. |
+| Memory | User-confirmed entries, semantic retrieval, validity dates, revisions and explicit conflict/duplicate/supersession relations. No autonomous learning or complete temporal reasoning. |
+| Spill retention | SHA-256 reuse checks and a read-only retention audit with active/reference protection. No comprehensive automatic deletion or lifecycle GC. |
+| UI and prompts | General English core instructions, English/Chinese UI controls, direct final answers. User content and historic diagnostics are not translated. See [language contract](UI-LANGUAGE.md). |
 
-每次宿主执行返回执行后端、是否成功、后续普通命令后端和诊断说明。
-超时不能仅凭退出码 0 判成功；清理失败保留已观察的命令结果。
-验收累计 token 和耗时是整个子任务的量，不能归到最后一次模型请求。
-验收子 Agent 在允许命令的项目中可单独申请精确宿主命令授权；审批显示在主对话，
-执行与证据属于验收副本。不能复用作者授权，拒绝或环境仍不可用则保持 blocked。
+Knowledge and skills: [knowledge scopes](KNOWLEDGE-SCOPES.md), [hybrid RAG](RAG_HYBRID.md),
+[skills](SKILLS.md). Safety: [native sandbox](NATIVE-SANDBOX.md),
+[permission recovery](PERMISSION-RECOVERY.md). Existing guides may retain Chinese text.
 
-## 验证入口与本次结果
+## Verification performed
 
-默认教学实验为 51 个，清单由 `verify.py` 的 `LABS` 定义；另有 1 个 `--ann`
-实验和 3 个 `--native` 实验。编号并非连续，因此不能从最大编号推算数量。
+- Affected model/runtime/review/recovery regression group: **83 tests, one skipped**.
+- New UI/delivery, environment, lifecycle and native-protocol group: **29 tests passed**.
+- Following the prompt/delivery changes: **47 related tests passed**.
+- Real browser language check: English default, Chinese persistence, dynamic labels,
+  protected conversation/code/drafts/data and no JavaScript errors.
+- Three isolated real-model plain-answer checks: all completed in one model call,
+  no tool calls or files, no forced summary opener in the first smoke run.
+  After tightening brevity guidance, all three passed again; one used only `finish`,
+  and no files were created. The short Chinese explanation followed the requested
+  two-sentence format, while the code answer still included some unsolicited detail. Chinese and English reply prompts
+  are included. These simple samples do not establish general agent reliability.
+- A real-model environment check registered the exact existing-runtime plan in an
+  isolated registry (five model calls); no host command was executed. Its first run
+  exposed tool registration being incorrectly coupled to sub-agent enablement; this
+  was fixed, with 32 related regression tests passing.
+- Environment tests created and verified an actual empty venv and an existing Python;
+  malicious archive paths, receipt tampering and literal argv approvals were checked.
+  No real JDK/Node installation was performed.
+- Native sandbox integration tests requiring an elevated host were skipped in the
+  non-elevated test run. A skip is not evidence of security or a passed integration.
+- Native non-Chat-Completions providers were tested with protocol fixtures; no real
+  Anthropic/Gemini/Responses credentials were exercised.
 
-```powershell
-python verify.py --list
-python verify.py
-python verify.py --ann lab-53
-python verify.py --native lab-30 lab-31 lab-32 --jobs 1
-```
+These groups overlap and must not be added together as a unique full-suite count.
 
-本次宿主执行与验收授权改动的相关回归为 **102 项通过**，命令如下。这是选定模块的回归，
-不是全仓库所有测试，也不是本次重新跑过全部教学实验。
+The isolated offline runner also exercised **68 test modules**. Three outdated
+fixtures were corrected (source-bound RAG positives, the removed summary heading,
+and a mock session missing lifecycle state); those modules passed focused reruns.
+Two modules include explicit skips for unavailable link/history evidence. This is
+not a claim that every optional integration ran.
 
-```powershell
-python -m unittest tools.test_reviewer_execution tools.test_host_environment tools.test_permission_recovery tools.test_review_hardening tools.test_human_workflow tools.test_approvals tools.test_runtime tools.test_runtime_contracts tools.test_quick_resume tools.test_review_decision tools.test_review_budget tools.test_review_convergence tools.test_chat_timeline tools.test_live_features -q
-```
+## Real task sweep: negative results retained
 
-知识库和 Skill 另有对应回归：
+The local `runtime-boundaries-stratified-v1` sweep ran **15 tasks × 3 trials**:
 
-```powershell
-python -m unittest tools.test_knowledge_scopes tools.test_knowledge tools.test_skill_catalog tools.test_plugins tools.test_skills_http -q
-```
+| Measure | Result |
+|---|---:|
+| Artifact grading passed | 35 / 45 |
+| Artifact and workflow both completed | 34 / 45 |
+| Declared success but hidden grading failed | 4 |
+| Timed out | 6 |
 
-实际宿主 conda、numpy、PyTorch 探测成功；原生沙箱仍缺宿主 numpy。
-一次真实 LLM 授权流程通过：6 次调用、30.11 秒、约 $0.00156（应用估算，非账单）。
-测试器在隔离审批库中只批准固定无害命令，提示包含候选解释器；不代表自由任务中模型总能选对环境。
-更多方法及历史失败样本见 [权限恢复](PERMISSION-RECOVERY.md)。
+Three false successes concerned CSV numeric precision; one concerned nested JSON
+merge behavior. Two interval-task timeouts waited for approval of an introduced pytest
+dependency. Other timeouts require their own evidence-based classification. This is
+not an all-green result. Completed-trial cost estimates total about **$0.71994**;
+six timed-out trials lack complete cost rows, so that figure is not the full bill.
 
-## 尚未解决的边界
+The sweep used public repository tasks, not unseen held-out tasks. Development
+continued while workers were being launched; per-worker source fingerprints were
+not captured. Treat it as exploratory failure discovery, **not a controlled comparison
+of one frozen revision**. Original outputs stay unchanged in the local diagnostics
+folder. Earlier RAG grader corrections are separately recorded regrades, not new trials.
 
-- 上游 LLM 超时仍可能发生；过程检查通过不自动转为最终验收通过。
-- 模型仍可能误判环境或不合算地委派；提示和状态约束不能保证每次推理正确。
-- 跨库检索合并尚无大样本相关性评测；ANN 能运行不等于百万级真实问答质量已经证实。
-- Spill、证据与子任务副本的统一生命周期回收尚未实现，不能直接清空仍被引用的目录。
-- 本机执行按宿主账户权限访问资源；原生隔离的能力和网络限制见 [沙箱说明](NATIVE-SANDBOX.md)。
+## Next priorities
 
-## 历史文档与公开仓库
+- Resolve remaining review false successes and distinguish approval waits from
+  model/execution timeouts without approving host commands automatically.
+- Run a frozen-revision, held-out evaluation with complete parent/child accounting.
+- Expand native-provider live coverage only with the corresponding configured accounts.
+- Continue dependency-boundary refactoring, safe artifact lifecycle management and
+  measured delegation improvements rather than claiming them from module counts.
 
-`RUNTIME-*`、`RUNTIME*_VALIDATION`、`SELF-ASSESSMENT-*`、`SOURCE_REVIEW_REMEDIATION`
-等记录对应阶段。它们可能描述后来已修复的缺口；当前使用指南优先于历史的“目前/下一步”。
-[runtime-20](RUNTIME20_UPGRADE.md) 记录 ANN、语义记忆和 DAG 的升级，
-[运行契约](RUNTIME_CONTRACTS.md) 记录接口与宿主完成状态的改进。
-
-公开仓库仅包含代码、测试、实验和文档。不上传 API 凭据、私有会话、附件、
-知识库、模型权重、诊断日志或本地下载的 Skill 压缩包。
-`.diagnostics/…` 路径仅说明本机证据位置，公开克隆不具备这些原始记录。
+Private diagnostics, chats, keys, attachment stores and downloaded skill bundles are
+not part of the public repository. Publishing documentation does not publish their contents.

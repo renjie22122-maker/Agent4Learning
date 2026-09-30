@@ -34,3 +34,6 @@ venv/
 *.sqlite3
 *.sqlite3-*
 *.log
+
+# Locally downloaded skill bundles
+/skills/*.zip

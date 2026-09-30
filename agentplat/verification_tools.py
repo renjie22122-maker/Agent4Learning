@@ -33,7 +33,7 @@ def install(agent, manager, owner):
             manager.tasks[owner]['data']['verification_progress']={'stage':stage,'checks':checks,'blockers':blockers}
             manager._save(manager.tasks[owner])
         agent.session.append('verification/progress',stage=stage,checks=checks,blockers=blockers)
-        return json.dumps({'recorded':True,'next':'按计划完成检查后提交结论；受阻时用 blocked 结束，不扩大任务范围。'},ensure_ascii=False)
+        return json.dumps({'recorded':True,'next':'按计划完成检查后提交结论；每个阻断性检查须对应用户原始要求。额外输入类型或未承诺能力只作备注，不能阻止收尾。潜在挂起的测试单独限时，不得串入整个测试套。受阻时用 blocked 结束，不扩大任务范围。'},ensure_ascii=False)
     agent.tools['create_verification_scratch']=AgentTool('create_verification_scratch','在验收工作区新建唯一测试目录；只用于新测试输入和输出，不改变交付代码保护规则。',_obj({},[]),scratch,True)
     agent.tools['verification_environment']=AgentTool('verification_environment','查看验收可用工具与环境线索；不把宿主探测当作沙箱执行成功。',_obj({},[]),environment)
     agent.tools['report_verification_progress']=AgentTool('report_verification_progress','记录有限验收计划与进度供主机查看；不要将新开发测试基础设施当成交付验收。',

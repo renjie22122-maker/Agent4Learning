@@ -17,7 +17,7 @@ class UpgradeTests(unittest.TestCase):
         from types import SimpleNamespace
         from agentplat.review_lifecycle import ReviewLifecycle
         for status in ('running','blocked','interrupted'):
-            agent=SimpleNamespace(children=SimpleNamespace(planner=SimpleNamespace(plans={'id':{'status':status}})))
+            agent=SimpleNamespace(session=SimpleNamespace(events=[]),children=SimpleNamespace(planner=SimpleNamespace(plans={'id':{'status':status}})))
             verdict=ReviewLifecycle._review_finish(agent,{'summary':'done'})
             self.assertFalse(verdict.allow)
 
@@ -59,12 +59,14 @@ class UpgradeTests(unittest.TestCase):
             branch=IsolatedChanges(work,root/'branch');(branch.root/'file.txt').write_text('agent')
             (work/'file.txt').write_text('user concurrent edit')
             manager=SimpleNamespace(directory=root,closed=True,max_queue=12,parent_cancel=None,
-                tasks={'author':{'branch':branch}},get=lambda _: {'status':'completed','summary':json.dumps({'verdict':'pass','findings':[],'tests':['check']})})
+                tasks={'author':{'branch':branch,'agent':SimpleNamespace(ws=SimpleNamespace(scope=branch.root),session=SimpleNamespace(events=[]))}},
+                get=lambda _: {'status':'completed','summary':json.dumps({'verdict':'pass','findings':[],'tests':['check']}),'evidence':[{'exit_code':0}]})
             planner=TeamPlanner(manager)
             plan=planner.create('goal',[{'id':'one','task':'task','acceptance':'check'}])
             internal=planner.plans[plan['id']];internal['nodes']['one'].update(state='reviewing',agent_id='author',review_id='review',digest=workspace_digest(branch.root))
             planner.tick(internal)
             self.assertEqual(internal['status'],'blocked');self.assertEqual((work/'file.txt').read_text(),'user concurrent edit')
+            self.assertIn('冲突',internal['nodes']['one']['error'])
 
     def test_ann_delta_revoke_replacement_and_checksum(self):
         ann_index.backend() # Required integration dependency; do not fake ANN.

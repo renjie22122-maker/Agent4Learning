@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     from agentlab.util import force_utf8, head, kv, note, rule, takeaway
 
     from .guard import CostGuard
-    from .llm import OpenAIChatClient
+    from .model_client import create_client
     from .llmconfig import LLMConfig
 
     force_utf8()
@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     note("安全边界：所有文件与命令操作限制在工作区内，越界会被拒绝；")
     note("          命令有白名单，破坏性命令会被拦下。这是**防手滑**，不是防恶意。")
 
-    llm = OpenAIChatClient(cfg)
+    llm = create_client(cfg)
 
     def on_step(step: LoopStep) -> None:
         if args.quiet:

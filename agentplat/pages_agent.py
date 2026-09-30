@@ -184,17 +184,34 @@ LIVE_JS = """
   const sc=document.getElementById('scroll');
   const form=document.getElementById('sendform');
   if(!form || !sc) return;
-  let events=null;
+  let events=null; let retries=0,retryTimer=null,lastEvent=Date.now(),watchdog=null;
+  const connection=document.createElement('div');connection.className='live-connection';form.before(connection);
+  const showConnection=(text)=>{connection.textContent=text;};
   let sid=form.querySelector('input[name=session]').value;
-  const latest=()=>{const target=/^#turn-\d+$/.test(location.hash)?document.querySelector(location.hash):null;if(target)target.scrollIntoView({block:'start'});else sc.scrollTop=sc.scrollHeight;};
+  const latest=()=>{const target=/^#(?:turn-\d+|input-[a-zA-Z0-9-]+)$/.test(location.hash)?document.querySelector(location.hash):null;if(target)target.scrollIntoView({block:'start'});else sc.scrollTop=sc.querySelector('.turn')?sc.scrollHeight:0;};
   requestAnimationFrame(latest);
   window.addEventListener('load',latest,{once:true});
   sc.addEventListener('scroll',()=>sessionStorage.setItem('agent-scroll:'+sid,String(sc.scrollTop)));
-  function connect(){
+  function connect(reset=true){
+  if(reset)retries=0;
+  clearTimeout(retryTimer);clearInterval(watchdog);
   if(events)events.close();
   if(!sid)return;
   events=new EventSource('/api/agent-events?session='+encodeURIComponent(sid));
+  lastEvent=Date.now();showConnection('连接中');
+  let lost=false;
+  const failed=()=>{
+    if(lost)return;lost=true;
+    events?.close();clearInterval(watchdog);
+    if(retries>=5){showConnection('连接中断：自动重连 5 次未成功。');const b=document.createElement('button');b.textContent='重新连接';b.onclick=()=>connect();connection.append(b);return;}
+    retries++;showConnection('连接中断，正在重连 '+retries+'/5');
+    retryTimer=setTimeout(()=>connect(false),Math.min(16000,1000*2**(retries-1)));
+  };
+  events.onerror=failed;
+  events.addEventListener('heartbeat',()=>{lastEvent=Date.now();retries=0;showConnection('实时连接正常');});
+  watchdog=setInterval(()=>{if(Date.now()-lastEvent>45000)failed();},5000);
   events.addEventListener('progress', function(event){
+    lastEvent=Date.now();showConnection('实时连接正常');
     const data=JSON.parse(event.data);
     const bottom=sc.scrollHeight-sc.scrollTop-sc.clientHeight<80;
     const top=sc.scrollTop;
@@ -227,7 +244,7 @@ LIVE_JS = """
     sc.querySelectorAll('details[data-detail-key]').forEach(x=>{if(open.has(x.dataset.detailKey))x.open=open.get(x.dataset.detailKey);});
     sc.scrollTop=bottom?sc.scrollHeight:top;
     if(data.status!=='running'){
-      events.close();
+      events.close();clearInterval(watchdog);showConnection('已同步');
       const button=document.querySelector('#sendform button.send');
       if(button)button.textContent='追问';
       const stop=document.querySelector('.top a[href*="/agent/stop"]');
@@ -248,7 +265,7 @@ LIVE_JS = """
     form.dataset.sending='1';
     const button=form.querySelector('button.send');button.disabled=true;
     try{
-      const response=await fetch(form.action,{method:'POST',headers:{Accept:'application/json'},body:new URLSearchParams(new FormData(form))});
+      const response=await fetch(form.action,{method:'POST',signal:AbortSignal.timeout(120000),headers:{Accept:'application/json'},body:new URLSearchParams(new FormData(form))});
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'发送失败');
       sid=result.session;
@@ -274,7 +291,7 @@ LIVE_JS = """
       note.textContent=error.message;
     }finally{delete form.dataset.sending;button.disabled=false;}
   });
-  window.addEventListener('pagehide',()=>events?.close(),{once:true});
+  window.addEventListener('pagehide',()=>{events?.close();clearTimeout(retryTimer);clearInterval(watchdog);},{once:true});
 })();
 </script>
 """
@@ -312,6 +329,7 @@ def agent_page(mgr, sessions: list[dict], active: dict | None,
     main = f"""
 <div class=main>
   {_topbar(active, s, running, panel, ctx)}
+  {_execution_boundary(active, s)}
   {_alert(error, notice)}
   <div class=scroll id=scroll><div class=col>{_thread(active)}</div><div id="human-history" aria-label="交互记录"></div></div>
   <div id="human-input" data-session="{esc((active or {}).get('session_id',''))}" aria-live="polite"></div>
@@ -319,7 +337,7 @@ def agent_page(mgr, sessions: list[dict], active: dict | None,
 </div>"""
     # 只有"跑着"的时候才自动刷新进度，否则每次看历史都会被整页刷新打断。
     rendered = ui.page_chat("编码 Agent", "agent", sidebar, main,
-                        refresh_s=0, extra_js=LIVE_JS + f'<meta name="conversation-token" content="{esc(csrf_token)}">' + MENU_JS + ATTACHMENT_JS + HUMAN_JS,
+                        refresh_s=0, extra_js='<link rel="stylesheet" href="/ui-assets/katex.min.css"><link rel="stylesheet" href="/ui-assets/highlight.css"><script defer src="/ui-assets/katex.min.js"></script><script defer src="/ui-assets/highlight.min.js"></script><script defer src="/ui-assets/enhancements.js"></script>' + LIVE_JS + f'<meta name="conversation-token" content="{esc(csrf_token)}">' + MENU_JS + ATTACHMENT_JS + HUMAN_JS,
                         panel=_panel(panel, mgr, active, sessions, ctx))
     if active:
         sid = esc(active.get('session_id', ''))
@@ -382,7 +400,7 @@ def _sidebar(mgr, sessions: list[dict], active: dict | None, s: dict) -> str:
             f'<div class="conversation-row" data-session="{esc(sid)}" data-title="{esc(title)}" data-state="{esc(menu_data)}">'
             f'<a class="item{on}" href="/agent?session={esc(sid)}" '
             f'title="{esc(sid)}">'
-            f'{"📌 " if h.get("pinned") else ""}{"● " if h.get("unread") else ""}{esc(title[:24])}'
+            f'<span data-user-content>{"📌 " if h.get("pinned") else ""}{"● " if h.get("unread") else ""}{esc(title[:24])}</span>'
             f'<span class=sub><i class="dot {dot}"></i>{esc(st or "?")}'
             f'<span style="margin-left:auto">{h.get("model_calls", h.get("iterations", 0))} 次模型调用 '
             f'${h.get("usd", 0):.3f}</span></span></a><button class="conversation-menu-button" aria-label="会话操作" title="会话操作">⋯</button></div>')
@@ -391,7 +409,7 @@ def _sidebar(mgr, sessions: list[dict], active: dict | None, s: dict) -> str:
         label = group['name'] if group else ('未关联工作区' if key=='unassigned' else Path(key).name or key)
         paths = '\n'.join(group['folders'].values()) if group else key
         create = '/agent?new=1&project='+quote(key) if group else '/workspaces?folder='+quote(key)
-        sessions_html.append(f'<details open class="workspace-conversations"><summary title="{esc(paths)}">{esc(label)} · {len(items)}</summary><a class="item add" href="{esc(create)}">＋ 在项目中新建对话</a>{"".join(items)}</details>')
+        sessions_html.append(f'<details open class="workspace-conversations"><summary title="{esc(paths)}"><span data-user-content>{esc(label)}</span> · {len(items)}</summary><a class="item add" href="{esc(create)}">＋ 在项目中新建对话</a>{"".join(items)}</details>')
     return f"""
 <aside class=side data-projects="{esc(json.dumps({k:g['name'] for k,g in getattr(mgr,'groups',{}).items()},ensure_ascii=False))}">
   <div class=side-h>
@@ -466,7 +484,7 @@ def _topbar(active: dict | None, s: dict, running: bool, panel: bool,
   <a class=wschip href="/agent?panel=1#wspath"
      title="{esc(workspace_title)}">
     <span style="flex-shrink:0">{'对话' if general else '工作区'}</span>
-    <span class=p>{esc(str(workspace_label))}</span>
+    <span class=p {'data-ui' if general else 'data-user-content'}>{esc(str(workspace_label))}</span>
     <span style="flex-shrink:0;opacity:.7">✎</span>
   </a>
   <span class=spacer></span>
@@ -566,6 +584,9 @@ def _turn_timeline(turn, questions, stats, summary, key):
     for i,item in enumerate(turn.get('steering_messages',[])):
         events.append((item.get('at',start),2,i,'steering',item))
     for i,q in enumerate(questions):events.append((q['created'],3,i,'human',q))
+    end=turn.get('ended_at') or turn.get('finished_at') or 0
+    duration=(f'<span class="turn-elapsed" data-start="{float(start)}" data-end="{float(end)}">本轮耗时 · —</span>' if start and (end or turn.get('status')=='running') else '<span class=turn-elapsed>本轮耗时 · 未记录</span>')
+    stats=duration+' '+stats
     out=[]; steps=[]; progress=[]; segment=0
     def flush():
         nonlocal segment
@@ -582,7 +603,11 @@ def _turn_timeline(turn, questions, stats, summary, key):
                 label='已加入上下文' if value.get('status')=='delivered' else '等待当前步骤结束'
                 out.append(_turn_user(value['text'],value.get('at',0))+f'<div class=stats>追加提示 · {label}</div>')
     flush()
-    if summary:out.append(_turn_agent('',stats,summary))
+    if summary:
+        out.append(_turn_agent('',stats,summary))
+        acceptance=turn.get('acceptance') or {}
+        if acceptance.get('status')=='passed':
+            out.append('<div class="stats acceptance-status" data-ui role="status">独立验收通过</div>')
     elif stats:out.append(f'<div class=stats>{stats}</div>')
     return ''.join(out)
 
@@ -630,7 +655,7 @@ def _turn_agent(trace: str, stats: str, summary: str, progress=None) -> str:
     if trace:
         parts.append(trace)
     if summary:
-        parts.append(STYLE + f'<div class="say markdown final-answer"><b>本轮结论</b>{render(summary)}</div>')
+        parts.append(STYLE + f'<div class="say markdown final-answer" data-user-content>{render(summary)}</div>')
     if stats:
         parts.append(f'<div class=stats>{stats}</div>')
     parts.append("</div>")
@@ -645,6 +670,9 @@ def _trace(steps: list[dict], key='') -> str:
         kind = st.get("kind", "")
         detail = st.get("detail") or ""
         title = esc(st.get("title", ""))
+        if kind == 'diff':
+            lines=''.join(f'<span class="diff-{"add" if line.startswith("+") else "remove" if line.startswith("-") else "same"}">{esc(line)}</span>' for line in detail.splitlines(True))
+            return f'<details class="file-diff" data-detail-key="{esc(key)}-step-{number}"><summary>{title}</summary><pre>{lines}</pre></details>'
         return (f'<details class="step-detail {esc(kind)}" data-detail-key="{esc(key)}-step-{number}"><summary>'
                 f'<span class=k>{icons.get(kind, "·")}</span> {title}</summary>'
                 f'<div class="step-body">{esc(detail)}</div></details>')
@@ -788,6 +816,20 @@ def _composer(active: dict | None, running: bool, workspace_group: str = '', mgr
 
 def _ws_form(mgr) -> str:
     return '<p>项目目录在项目设置中统一管理；已有对话保留原来的目录范围。</p><a class="btn pri" href="/workspaces?new=1">添加项目</a> <a class=btn href="/workspaces">管理项目</a>'
+
+
+def _execution_boundary(active, summary):
+    from .general_chat import is_general
+    from .execution import execution_status
+    if is_general(active, summary):
+        label = '普通对话 · 未授予项目命令权限'
+        detail = '附件与产物保存在本会话；需要命令时选择项目。'
+    else:
+        state = execution_status()
+        label = state['execution_label']
+        detail = '配置不是实测证明，隔离后端在命令启动时检查。工作区副本不是安全沙箱；单次宿主授权会在沙箱外执行。网页工具使用独立网络权限。'
+    return (f'<div class="execution-boundary" style="font-size:12px;padding:6px 16px;line-height:1.5;border-bottom:1px solid var(--ds-border)" '
+            f'title="{esc(detail)}"><a href="/api/runtime">{esc(label)}</a></div>')
 
 
 def _safety_notes(s: dict) -> str:

@@ -5,7 +5,7 @@ ASSETS = r'''
 body.chat{--ds-bg-base:#10141d;--ds-bg-layer-1:#19202c;--ds-bg-layer-2:#202a38;--ds-label-primary:#edf2fa;--ds-label-secondary:#c5d0df;--ds-label-tertiary:#a6b4c8;--ds-label-caption:#94a3b8;--ds-border-l2:#293445;--ds-brand:#526fe5;--ds-link:#a9bcff}
 .chat .side{width:260px;background:#131925}.chat .side-h{padding:22px 18px 16px}.chat .side-h .nm{font-size:16px}
 .chat .side-tools{padding:8px 14px 14px;border-bottom:1px solid #293445;max-height:38vh;overflow:auto}
-.chat .tools-grid{gap:6px}.chat .tools-grid a{padding:8px;border-radius:8px;background:#1b2331}
+.chat .tools-grid{gap:6px;grid-template-columns:repeat(2,minmax(0,1fr))}.chat .tools-grid a{min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.45;padding:8px;border-radius:8px;background:#1b2331}
 .chat .side-b{padding:12px}.chat .item{padding:10px 12px;margin-bottom:4px}.chat .item.on{background:#283755;border:1px solid #405781}
 .chat .top{min-height:58px;height:auto;padding:10px 20px;gap:10px}.chat .top-tools{width:auto!important;white-space:nowrap;padding:8px 12px;height:auto}
 .chat .col{max-width:900px;padding:30px 28px}.chat .turn{margin-bottom:30px}.chat .who{margin-bottom:12px;font-size:13px}.chat .who .av{width:27px;height:27px;border-radius:9px}
@@ -40,7 +40,7 @@ function updateTurns(){
  const key=JSON.stringify(rows);if(key===turnKey)return;turnKey=key;
  const list=turnMenu.querySelector('nav');list.replaceChildren();
  turnMenu.querySelector('summary').textContent='定位对话'+(rows.length?' · '+rows.length:'');
- for(const row of rows){const link=document.createElement('a');link.href='#'+row.id;link.title=row.text;link.textContent='第 '+row.n+' 轮 · '+row.text.slice(0,52);list.append(link);}
+ for(const row of rows){const link=document.createElement('a');link.href='#'+row.id;link.title=row.text;const number=document.createElement('span');number.dataset.uiTurn=row.n;number.textContent='Turn '+row.n+' · ';const title=document.createElement('span');title.setAttribute('data-user-content','');title.textContent=row.text.slice(0,52);link.append(number,title);list.append(link);}
  if(!rows.length){const empty=document.createElement('p');empty.textContent='发送消息后可定位每一轮对话';list.append(empty);}
  const latest=document.createElement('a');latest.href='#latest-message';latest.textContent='↓ 回到最新消息';list.append(latest);
 }

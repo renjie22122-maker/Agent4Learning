@@ -11,6 +11,8 @@ const {chromium}=require(path.join(policy.module_root,'playwright'));
  await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
  try{
   browser=await chromium.launch({headless:true,channel:'msedge'});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // Exercise Chinese controls explicitly; test_ui_language_browser covers English default.
+  await page.addInitScript(()=>localStorage.setItem('agent-ui-language','zh'));
   await page.goto(`http://127.0.0.1:${server.address().port}/agent?session=fixture`);
   await page.evaluate(()=>{window.resumed=0;window.addEventListener('agent-resumed',()=>window.resumed++);});
   await page.getByRole('button',{name:'绿色',exact:true}).click();assert.equal(await page.locator('textarea').inputValue(),'绿色');assert.equal(await page.locator('img').count(),0);assert.equal(posted.length,0);

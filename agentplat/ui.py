@@ -189,13 +189,15 @@ def nav(active: str) -> str:
 
 
 def page(title: str, active: str, body: str, refresh_s: int = 0) -> bytes:
+    from .ui_i18n import assets
     meta = f'<meta http-equiv="refresh" content="{refresh_s}">' if refresh_s else ""
     return (
-        f"<!doctype html><html lang=zh><head><meta charset=utf-8>"
+        f"<!doctype html><html lang=en><head><meta charset=utf-8>"
         f'<meta name=viewport content="width=device-width,initial-scale=1">'
         f"{meta}<title>{esc(title)} · Agent4Learning</title>"
         f"<style>{CSS}</style></head><body>"
-        f"{nav(active)}<div class=wrap>{body}</div></body></html>"
+        f"{nav(active)}<div class=wrap>{body}</div>{assets()}"
+        '<script defer src="/ui-assets/enhancements.js"></script></body></html>'
     ).encode("utf-8")
 
 
@@ -487,15 +489,16 @@ def page_chat(title: str, active: str, sidebar: str, main: str,
     展开/收起要有"抽屉"的手感；`display` 切换没有过渡，会突然跳一下。
     """
     from .ui_polish import ASSETS
+    from .ui_i18n import assets
     from .reply_actions_ui import ASSETS as REPLY_ASSETS
     meta = f'<meta http-equiv="refresh" content="{refresh_s}">' if refresh_s else ""
     return (
-        f"<!doctype html><html lang=zh><head><meta charset=utf-8>"
+        f"<!doctype html><html lang=en><head><meta charset=utf-8>"
         f'<meta name=viewport content="width=device-width,initial-scale=1">'
         f"{meta}<title>{esc(title)} · Agent4Learning</title>"
         f"<style>{CSS}{CHAT_CSS}</style></head>"
         f'<body class=chat><div class=shell>{sidebar}{main}{panel}</div>'
-        f"{extra_js}{ASSETS}{REPLY_ASSETS}"
+        f"{extra_js}{ASSETS}{REPLY_ASSETS}{assets()}"
         f"</body></html>"
     ).encode("utf-8")
 

@@ -34,7 +34,9 @@ const {chromium} = require('playwright');
     const page = await browser.newPage({viewport:{width:1400,height:850}});
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     let navigations=0;page.on('request',request=>{if(request.resourceType()==='document')navigations++;});
-    await page.goto(`http://127.0.0.1:${server.address().port}/agent?session=fixture`);
+    // Exercise Chinese controls explicitly; test_ui_language_browser covers English default.
+  await page.addInitScript(()=>localStorage.setItem('agent-ui-language','zh'));
+  await page.goto(`http://127.0.0.1:${server.address().port}/agent?session=fixture`);
     await page.locator('#m').fill('additional instruction');
     await page.locator('#scroll').evaluate(el=>el.scrollTop=220);
     const before=await page.locator('#scroll').evaluate(el=>el.scrollTop);

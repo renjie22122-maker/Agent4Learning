@@ -81,7 +81,8 @@ class TeamPlanner:
                     branch=m.tasks[node['agent_id']]['branch']
                     node['digest']=workspace_digest(branch.root)
                     node['state']='review_dispatching';self.save(plan)
-                    task='独立验收以下任务与产物，不采信作者自评。不要扩展需求。执行有限检查，完成后 finish.summary 必须是 JSON：verdict=pass/fail/blocked/inconclusive，findings 数组，tests 数组，reason 字符串。\n任务：'+node['task']+'\n验收：'+node['acceptance']
+                    from .review_contract import INSTRUCTIONS
+                    task=INSTRUCTIONS+'独立验收以下任务与产物。完成后 finish.summary 必须是 JSON：verdict=pass/fail/blocked/inconclusive，findings 数组，tests 数组，reason 字符串。\n任务：'+node['task']+'\n验收：'+node['acceptance']
                     node['review_id']=m.spawn(task,mode='isolated',purpose='verification',source_agent=node['agent_id'])
                     node['state']='reviewing'
                 changed=True
@@ -92,9 +93,18 @@ class TeamPlanner:
                 except ValueError:verdict={}
                 node['review']=verdict
                 branch=m.tasks[node['agent_id']]['branch']
-                if result['status']!='completed' or verdict.get('verdict')!='pass' or verdict.get('findings') or not verdict.get('tests'):
-                    node.update(state='blocked',error='独立验收未通过：'+str(verdict or result.get('error','')))
-                elif workspace_digest(branch.root)!=node['digest']:node.update(state='blocked',error='验收期间作者副本已变化')
+                from .review_decision import assess
+                author=m.tasks[node['agent_id']].get('agent')
+                if author is None:
+                    node.update(state='blocked',error='作者运行上下文不可用，不能自动接受验收或合并')
+                    changed=True
+                    continue
+                decision=assess(author,dict(digest=node['digest'],
+                    task=getattr(author,'_acceptance_task',getattr(author,'_task_text','')),
+                    knowledge_scopes=getattr(author.ws,'knowledge_sources',None)),result)
+                node['host_review']=decision
+                if not decision['accepted']:
+                    node.update(state='blocked',error=decision['reason'])
                 else:
                     from .runtime import effective_policy
                     provider=getattr(m,'authority_provider',None)
@@ -117,6 +127,8 @@ class TeamPlanner:
             if plan['revision']!=expected_revision:raise ValueError('计划版本冲突')
             if node['state']!='blocked' or node['attempts']>=3:raise ValueError('仅能调整受阻节点，每节点最多三次尝试')
             if not reason.strip() or not task.strip() or not acceptance.strip():raise ValueError('必须提供修订理由、任务和验收条件')
+            if task.strip()==node['task'].strip() and acceptance.strip()==node['acceptance'].strip():
+                raise ValueError('修订必须改变任务或验收方案；仅填写理由不允许原样重试')
             plan['history'].append({'node':node_id,'previous':dict(node),'reason':reason})
             node.update(task=task,acceptance=acceptance,state='pending',error='')
             plan.update(status='running',error='');self.save(plan)

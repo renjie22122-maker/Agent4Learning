@@ -25,11 +25,12 @@ def execution_mode():
     return mode
 
 
-def execution_status(mode=None):
+def execution_status(mode=None, native_network=None):
     mode = mode or execution_mode()
+    network = (native_network or native_network_policy()) if mode == 'native' else 'deny' if mode in ('docker', 'disabled') else 'host'
     docker = bool(shutil.which('docker'))
     labels = {
-        'native': ('Windows AppContainer：文件隔离；网络遵循宿主' if native_network_policy() == 'host' else 'Windows AppContainer：文件隔离；严格网络预检') if os.name == 'nt' else '原生 Windows 沙箱不可用',
+        'native': ('Windows AppContainer：文件隔离；网络遵循宿主' if network == 'host' else 'Windows AppContainer：文件隔离；严格网络预检') if os.name == 'nt' else '原生 Windows 沙箱不可用',
         'local': '本机执行：进程受监督，无 OS 沙箱',
         'docker': 'Docker：执行时检查服务与镜像' if docker else 'Docker 未安装：已选择的容器执行不可用',
         'disabled': '命令执行已禁用',
@@ -40,7 +41,17 @@ def execution_status(mode=None):
         'shell_available': (None if os.name == 'nt' else False) if mode == 'native' else True if mode == 'local' else None if mode == 'docker' and docker else False,
         'sandbox_ready': None if (mode == 'native' and os.name == 'nt') or (mode == 'docker' and docker) else False,
         'native_supported': os.name == 'nt',
-        'network_policy': native_network_policy() if mode == 'native' else 'deny' if mode == 'docker' else 'host',
+        'network_policy': network,
+        'security_contract': {
+            'version': 1,
+            'execution_boundary': {'local':'host_user','native':'appcontainer','docker':'container','disabled':'no_commands'}[mode],
+            'workspace_copy_is_sandbox': False,
+            'readiness': 'not_checked' if mode in ('native','docker') else 'not_applicable',
+            'host_approval': 'single command escapes ordinary execution boundary; user account privileges',
+            'network_scope': 'shell processes only; web tools have separate policy',
+            'kernel_boundary': 'shared OS kernel; not VM-grade isolation',
+            'preflight_is_proof_of_complete_isolation': False,
+        },
         'native_network_check': 'strict mode refuses untrusted command unless OS denial is observed',
         'sandbox_check': 'AppContainer creation checked on execution' if mode == 'native' else 'daemon and image checked before each execution' if mode == 'docker' else 'no OS sandbox',
         'local_is_sandboxed': False,

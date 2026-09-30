@@ -1,14 +1,14 @@
 import os,tempfile,unittest,json
 from pathlib import Path
 from unittest.mock import patch
-from agentplat.benchmark import grade
+from agentplat.benchmark import grade,TASKS
 
 
 class CleanBenchmarkTests(unittest.TestCase):
     def test_rag_grader_requires_current_real_citation(self):
         from agentplat.knowledge import KnowledgeBase,database_root
         with tempfile.TemporaryDirectory() as td,patch.dict(os.environ,{'AGENTLAB_KB_DIR':td}):
-            root=Path(td)/'ws';root.mkdir();doc=Path(td)/'current.txt';doc.write_text('住宿每日680元。',encoding='utf-8')
+            root=Path(td)/'ws';root.mkdir();doc=Path(td)/'current.txt';doc.write_text(TASKS['rag_policy']['knowledge']['current.txt'],encoding='utf-8')
             kb=KnowledgeBase(database_root(root));kb.import_file(doc)
             citation=kb.search('680')['hits'][0]['citation']
             for ref,expected in [('kb:invented',False),(citation,True)]:

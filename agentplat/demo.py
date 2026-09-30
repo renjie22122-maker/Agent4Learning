@@ -141,7 +141,7 @@ class DemoServer:
         所以模型记得自己刚做过什么。
         """
         from .guard import CostGuard
-        from .llm import OpenAIChatClient
+        from .model_client import create_client
         from .loop import CodingAgent
         from .workspace import Workspace
 
@@ -297,7 +297,7 @@ class DemoServer:
 
     def _build_agent(self, root, session_id, max_iters, max_usd):
         from .guard import CostGuard
-        from .llm import OpenAIChatClient
+        from .model_client import create_client
         from .loop import CodingAgent
         from .workspace import Workspace
         workspace = Workspace(root)
@@ -348,7 +348,7 @@ class DemoServer:
             state["phase"] = step.title
             state["steps"].append({**step.to_dict(), "at":time.time()})
 
-        client = OpenAIChatClient(cfg)
+        client = create_client(cfg)
         client.cancel_event = stop_flag
         def on_text(delta):
             if not state.get('streamed_text'): state['streamed_at'] = time.time()
@@ -406,6 +406,7 @@ class DemoServer:
                     "steering_messages": [dict(x) for x in state['steering_messages'][state.get('steering_start', 0):]],
                     "usd": round(r.usd, 6), "iterations": r.iterations, "model_calls": r.model_calls,
                     "stopped_by": r.stopped_by,
+                    "acceptance": dict(r.acceptance),
                 })
                 from .conversation_versions import capture
                 state['turns'][-1]['file_version'] = capture(self.ws_mgr, agent.ws.roots)
@@ -852,6 +853,22 @@ def make_handler(demo: DemoServer):
         # ---- GET -------------------------------------------------------
         def _route_get(self):
             qs, path = self._q()
+            if path.startswith('/ui-assets/'):
+                import mimetypes
+                root = Path(__file__).resolve().parent / 'static'
+                asset = (root / path.removeprefix('/ui-assets/')).resolve()
+                if not asset.is_relative_to(root) or not asset.is_file():
+                    return self._send(404, b'not found', 'text/plain')
+                return self._send(200, asset.read_bytes(), mimetypes.guess_type(asset.name)[0] or 'application/octet-stream')
+            if path == '/api/attention':
+                from .human_input import connection
+                with connection() as db:
+                    rows = [dict(r) for r in db.execute("SELECT id,session,kind,created FROM questions WHERE status='pending' ORDER BY created")]
+                with demo._lock:
+                    states = [{'id':sid, 'status':entry[0].get('status'),
+                               'model_calls':entry[0].get('model_calls',0),
+                               'usd':entry[0].get('usd',0)} for sid,entry in demo.live_sessions.items()]
+                return self._json(200, {'pending': rows, 'sessions':states})
             if path == '/api/reply-feedback':
                 from .conversation_actions import ratings
                 return self._json(200, ratings(demo, qs.get('session','')))
@@ -964,7 +981,10 @@ def make_handler(demo: DemoServer):
                 from .execution import execution_status
                 current_mode = demo._agent.ws.execution_mode if demo._agent else None
                 return self._json(200, {
-                    'version': 'runtime-20', **execution_status(current_mode),
+                    'version': 'runtime-20', **execution_status(current_mode, getattr(getattr(demo._agent, 'ws', None), 'native_network', None)),
+                    'ui_languages': ['en', 'zh'], 'ui_default_language': 'en',
+                    'structured_acceptance': True, 'development_environment_plans': True,
+                    'model_transport': demo.llm_cfg.transport,
                     'review_status_tool': True, 'review_source_snapshot': True, 'ipv6_transport': True,
                     'chat_human_input': True, 'verification_knowledge_snapshot': True,
                     'local_vector_rag': bool(__import__('agentplat.vector_knowledge',fromlist=['config']).config()),
@@ -997,9 +1017,11 @@ def make_handler(demo: DemoServer):
                 self.close_connection = True
                 state = entry[0]
                 previous = None
-                deadline = time.monotonic() + 25
+                last_heartbeat = time.monotonic()
                 try:
-                    while time.monotonic() < deadline:
+                    while True:
+                        if time.monotonic()-last_heartbeat >= 10:
+                            self.wfile.write(b'event: heartbeat\ndata: {}\n\n');self.wfile.flush();last_heartbeat=time.monotonic()
                         payload = None
                         with demo._lock:
                             include_children(state, entry[1])
@@ -1428,6 +1450,13 @@ def make_handler(demo: DemoServer):
                 cfg.apply_preset(preset)
             cfg.preset = preset
             cfg.provider = form.get("provider", cfg.provider)
+            transport=form.get('transport',cfg.transport)
+            if transport not in ('openai_chat','openai_responses','anthropic','gemini'):
+                return self._send(400,b'invalid transport','text/plain')
+            cfg.transport=transport
+            for option in ('stream_tools','json_mode'):
+                if option in form:setattr(cfg,option,form[option]=='1')
+            if 'reasoning_effort' in form:cfg.reasoning_effort=form['reasoning_effort'].strip()
             cfg.base_url = form.get("base_url", cfg.base_url).strip()
             # 留空表示"不改动"，避免用户只改别的字段时把 key 清掉
             new_key = form.get("api_key", "").strip()
@@ -1481,10 +1510,14 @@ def make_handler(demo: DemoServer):
 
         # ---- 设置：测试连接 --------------------------------------------
         def _settings_probe(self, form: dict[str, str]):
-            from .llm import OpenAIChatClient
+            from .model_client import create_client
 
             from dataclasses import replace
-            probe_cfg = replace(demo.llm_cfg)
+            probe_cfg = replace(demo.llm_cfg,routing=replace(demo.llm_cfg.routing))
+            if 'transport' in form:probe_cfg.transport=form['transport']
+            for option in ('stream_tools','json_mode'):
+                if option in form:setattr(probe_cfg,option,form[option]=='1')
+            if 'reasoning_effort' in form:probe_cfg.reasoning_effort=form['reasoning_effort'].strip()
             if form.get("base_url"):
                 probe_cfg.base_url = form["base_url"].strip()
             if form.get("api_key", "").strip():
@@ -1500,7 +1533,7 @@ def make_handler(demo: DemoServer):
                           "hint": "选一个厂商预设会自动填好，或手工填 OpenAI 兼容端点。",
                           "url": probe_cfg.chat_url()}
             else:
-                result = OpenAIChatClient(probe_cfg).probe(model)
+                result = create_client(probe_cfg).probe(model)
             return self._send(200, pages.settings(demo, {}, probe=result,
                                                   notice="测试连接不会保存配置"))
 

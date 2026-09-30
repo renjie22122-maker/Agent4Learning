@@ -732,9 +732,16 @@ def settings(demo, qs: dict, probe: dict | None = None, notice: str = "") -> byt
 {card(f'''<form action="/settings/save" method="post">
   <div class=row>
     <div class=field><label>后端</label><select name=provider>{provider_opts}</select></div>
+    <div class=field><label>API 协议</label><select name=transport>{''.join('<option value="'+t+'" '+('selected' if cfg.transport==t else '')+'>'+t+'</option>' for t in ('openai_chat','openai_responses','anthropic','gemini'))}</select></div>
     <div class=field><label>厂商预设</label><select name=preset id=preset>{preset_opts}</select></div>
   </div>
   <div class=hint>{esc(cur.get("note", ""))}</div>
+  <div class=hint>原生协议目前支持文本与函数工具；尚无原生流式、多模态或服务端工具。选择原生协议时请显式关闭流式，Anthropic 还需关闭 JSON 模式并清空 reasoning_effort。不会自动降级。</div>
+  <div class=row>
+    <label>工具响应流式 <select name=stream_tools><option value=1 {'selected' if cfg.stream_tools else ''}>开启</option><option value=0 {'' if cfg.stream_tools else 'selected'}>关闭</option></select></label>
+    <label>JSON 模式 <select name=json_mode><option value=1 {'selected' if cfg.json_mode else ''}>开启</option><option value=0 {'' if cfg.json_mode else 'selected'}>关闭</option></select></label>
+    <label>reasoning_effort <input name=reasoning_effort value="{esc(cfg.reasoning_effort)}"></label>
+  </div>
   <div class=row style="margin-top:12px">
     <div class=field style="flex:1;min-width:330px"><label>Base URL</label>
       <input name=base_url class=wide value="{esc(cfg.base_url)}"

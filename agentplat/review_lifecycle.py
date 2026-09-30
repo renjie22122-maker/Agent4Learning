@@ -19,7 +19,8 @@ class ReviewLifecycle:
             raise RuntimeError('验收通过后任务或产物发生变化，不能发布旧验收结果')
         result.acceptance = {k: record[k] for k in ('agent_id', 'digest', 'tests') if k in record}
         result.acceptance['status'] = 'passed'
-        result.summary = '**宿主最终验收：通过**\n\n' + author_summary
+        # Verdict is structured host metadata, not an opening imposed on prose.
+        result.summary = author_summary
         self.session.append('delivery/finalized', acceptance=result.acceptance,
                             author_summary=author_summary)
 
@@ -37,6 +38,12 @@ class ReviewLifecycle:
     def _review_finish(self, args: dict) -> "ReflectionVerdict":
         """在**接受**完成声明之前做一次核对。见 `reflection.py`。"""
         from .reflection import ReflectionRequest, ReflectionVerdict
+        from .task_lifecycle import project
+        lifecycle=project(getattr(self.session,'events',[]))
+        if lifecycle['unresolved_effects']:
+            return ReflectionVerdict(False,'有结果未知的副作用，不能声明完成；先核对恢复记录与实际产物，不得自动重放。','副作用未决',True)
+        if lifecycle['questions']:
+            return ReflectionVerdict(False,'仍有待回答的问题或授权；不能把未获答复当成已批准。','等待用户',False)
         if self.children:
             planner=getattr(self.children,'planner',None)
             if planner and any(p['status'] not in ('ready_for_final_review','cancelled') for p in planner.plans.values()):

@@ -141,6 +141,7 @@ class LLMConfig:
     _version: int = 0  # 落盘文件里的版本；0/缺失 = 老配置
 
     provider: str = "mock"  # mock | real
+    transport: str = 'openai_chat'  # Explicit wire adapter; unsupported values fail closed.
     preset: str = "deepseek"
     base_url: str = ""
     api_key: str = ""
@@ -235,6 +236,9 @@ class LLMConfig:
         用户经常只填 ``https://api.deepseek.com`` 或带上 ``/v1`` —— 两种都要能跑，
         所以这里做归一化，而不是要求用户记住各家路径差异。
         """
+        if self.transport in ('openai_responses','anthropic','gemini'):
+            from .native_protocols import endpoint
+            return endpoint(self,self.model_or('mid')) if self.base_url else ''
         base = (self.base_url or "").strip().rstrip("/")
         if not base:
             return ""

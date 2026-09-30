@@ -22,8 +22,11 @@ class RunState:
 
 
 def project(events):
+    from .task_lifecycle import Lifecycle
+    lifecycle=Lifecycle()
     state=RunState()
     for event in events:
+        lifecycle.apply(event)
         seq,kind,data=event.seq,event.kind,event.data
         if seq <= state.last_seq:
             state.errors.append(f'non-monotonic seq {seq}')
@@ -54,4 +57,4 @@ def project(events):
         elif kind == 'followup/user':state.acceptance={}
         elif kind == 'session/closed':state.phase='completed' if data.get('finished') else 'stopped'
         elif kind == 'run/settled':state.phase=data.get('status','unknown')
-    return asdict(state)
+    return {**asdict(state),'lifecycle':lifecycle.snapshot()}

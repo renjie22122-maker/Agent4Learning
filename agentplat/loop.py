@@ -167,6 +167,10 @@ class CodingAgent(ReviewLifecycle, ConversationRuntime, ContextRuntime, ModelRun
         self.children = None
         from .human_input import install as install_human_input
         install_human_input(self)
+        # Environment planning and exact-command approvals are execution
+        # capabilities, independent of whether recursive delegation is enabled.
+        from .permission_recovery import install_execution_tools
+        install_execution_tools(self)
         if enable_subagents:
             from .extended_tools import install_runtime_tools
             install_runtime_tools(self)

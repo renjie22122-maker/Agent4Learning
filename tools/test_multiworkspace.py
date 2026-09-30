@@ -101,7 +101,8 @@ class MultipleFolders(unittest.TestCase):
         self.assertIn('Earlier <strong>bold</strong>',html);self.assertIn('Next output',html)
         state.update(status='done',turns=[{'text':'task','progress_messages':['Earlier **bold**','Next output'],'summary':'Final result'}])
         html=_thread(state)
-        self.assertIn('Earlier <strong>bold</strong>',html);self.assertLess(html.index('Next output'),html.index('本轮结论'))
+        self.assertIn('Earlier <strong>bold</strong>',html);self.assertLess(html.index('Next output'),html.index('Final result'))
+        self.assertNotIn('本轮结论',html)
         self.assertIn('Combined project',_sidebar(self.mgr,[state],state,self.mgr.summary()))
         from agentplat.workspaces import DEFAULT_WORKSPACE
         ordinary={'session_id':'chat','task':'Ordinary chat','workspace':str(DEFAULT_WORKSPACE)}

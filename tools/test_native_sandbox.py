@@ -104,6 +104,31 @@ print(json.dumps(results))
         self.assertEqual(self.ws.last_execution['status'], 'timeout')
         self.assertIn('started', self.ws.last_execution['output'])
 
+    def test_hardlink_preflight_refuses_before_execution(self):
+        os.link(self.outside, self.ws.root/'linked.txt')
+        with self.assertRaises(RuntimeError):self.ws.run('python -V')
+        self.assertEqual(self.outside.read_text(),'private-fixture')
+
+    def test_junction_preflight_refuses_before_acl_grant(self):
+        import subprocess
+        target=self.root/'private-dir';target.mkdir()
+        link=self.ws.root/'junction'
+        result=subprocess.run(['cmd','/c','mklink','/J',str(link),str(target)],capture_output=True)
+        if result.returncode:self.skipTest('cannot create junction fixture')
+        try:
+            with self.assertRaises(RuntimeError):self.ws.run('python -V')
+        finally:
+            os.rmdir(link)  # remove only this fixture junction, never its target
+        self.assertTrue(target.is_dir())
+
+    def test_temp_is_inside_workspace_and_path_not_inherited(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ,{'PATH':str(self.root/'host-only-bin'),'PYTHONPATH':'host-injection'}):
+            result=self.run_code('import os,tempfile,json;print(json.dumps({"temp":tempfile.gettempdir(),"path":os.environ.get("PATH",""),"injection":os.environ.get("PYTHONPATH")}))')
+        self.assertTrue(Path(result['temp']).resolve().is_relative_to(self.ws.root))
+        self.assertNotIn('host-only-bin',result['path'])
+        self.assertIsNone(result['injection'])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

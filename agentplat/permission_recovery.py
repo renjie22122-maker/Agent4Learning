@@ -68,3 +68,8 @@ def install_execution_tools(agent):
         lambda command, reason, timeout_s=60: request_command(agent, command, reason, timeout_s))
     add('run_approved_command', '执行人类已批准的精确宿主命令；授权绑定当前会话与工作区，只能使用一次。',
         {'request_id':string}, ['request_id'], lambda request_id: approvals.execute(agent, request_id), True)
+    # Planning does not grant authority; each operation goes through the same
+    # single-use approval flow and never changes ordinary execution policy.
+    if not getattr(agent,'verification_task',False):
+        from .dev_environments import install
+        install(agent)

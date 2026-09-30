@@ -19,6 +19,10 @@ def connection():
         try: db.execute('ALTER TABLE approvals ADD COLUMN timeout_s REAL NOT NULL DEFAULT 60')
         except sqlite3.OperationalError:
             if 'timeout_s' not in {row[1] for row in db.execute('PRAGMA table_info(approvals)')}: raise
+    if 'argv' not in {row[1] for row in db.execute('PRAGMA table_info(approvals)')}:
+        try:db.execute('ALTER TABLE approvals ADD COLUMN argv TEXT')
+        except sqlite3.OperationalError:
+            if 'argv' not in {row[1] for row in db.execute('PRAGMA table_info(approvals)')}:raise
     try:
         yield db
         db.commit()
@@ -27,15 +31,20 @@ def connection():
     finally: db.close()
 
 
-def request(session, workspace, command, reason, timeout_s=60):
+def request(session, workspace, command, reason, timeout_s=60, *, argv=None):
+    if argv is not None:
+        import subprocess
+        if not isinstance(argv,list) or not argv or any(not isinstance(a,str) or '\x00' in a for a in argv):
+            raise ValueError('Invalid argv')
+        if command!=subprocess.list2cmdline(argv):raise ValueError('Displayed command must match exact argv')
     if not isinstance(timeout_s,(int,float)) or isinstance(timeout_s,bool) or not 1<=timeout_s<=3600:
         raise ValueError('宿主命令 timeout_s 必须为 1–3600 秒，并随授权确认')
     if not command.strip() or len(command) > 4000 or len(reason) > 4000:
         raise ValueError('命令与理由长度超限或命令为空')
     identifier = uuid.uuid4().hex
     with connection() as db:
-        db.execute('INSERT INTO approvals (id,session,workspace,command,reason,status,expires,timeout_s) VALUES (?,?,?,?,?,?,?,?)',
-                   (identifier, session, str(Path(workspace).resolve()), command, reason, 'pending', time.time()+1800,timeout_s))
+        db.execute('INSERT INTO approvals (id,session,workspace,command,reason,status,expires,timeout_s,argv) VALUES (?,?,?,?,?,?,?,?,?)',
+                   (identifier, session, str(Path(workspace).resolve()), command, reason, 'pending', time.time()+1800,timeout_s,json.dumps(argv) if argv is not None else None))
     return {'request_id':identifier, 'status':'pending', 'approval_url':'/approvals','timeout_s':timeout_s}
 
 
@@ -92,7 +101,8 @@ def execute(agent, request_id):
     result = None
     try:
         from .execution_environment import task_environment
-        key = supervisor.start(row['command'], agent.ws.root, shell=True, timeout_s=row['timeout_s'], env=task_environment(), interactive=False)
+        argv=json.loads(row['argv']) if row.get('argv') else None
+        key = supervisor.start(argv or row['command'], agent.ws.root, shell=argv is None, timeout_s=row['timeout_s'], env=task_environment(), interactive=False)
         while True:
             result = supervisor.wait(key, .2)
             if result['status'] != 'running': break

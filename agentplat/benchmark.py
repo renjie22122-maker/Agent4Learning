@@ -4,6 +4,8 @@ import json
 import math
 from pathlib import Path
 
+GRADER_VERSION = 'scoped-source-v2'
+
 TASKS = {
     'interval_merge': {
         'prompt':'实现 intervals.py 的 merge(intervals)，输入为 [start,end] 数对列表，start<=end；返回按 start 排序、合并重叠或端点相接的区间列表，不能修改输入。支持空列表、负数、重复、嵌套和零长度区间。写测试。',
@@ -34,7 +36,7 @@ assert merge([[1,2],[2,3],[6,6]])==[[1,3],[6,6]]
         'files':{},'artifact':'index.html','check':None,
     },
     'followup_constraints': {
-        'prompt':'实现 unique.py 中 select_unique(values)：保持首次出现顺序去重，不修改输入列表。自行测试后完成。',
+        'prompt':'实现 unique.py 中 select_unique(values)：保持首次出现顺序去重，不修改输入列表。元素按 Python == 判断重复，可混合不同类型，也可包含不可哈希的内置容器；不要求支持比较结果不是布尔值的第三方对象。自行测试后完成。',
         'followup':'继续在原函数上增加可选参数 limit=None：只保留前 limit 个结果；0 返回空列表，负数抛 ValueError。之前的顺序与不修改输入要求仍然有效。自行测试。',
         'files':{},'artifact':'unique.py',
         'check':'''from unique import select_unique
@@ -134,6 +136,9 @@ def trace_metrics(events):
     counts=collections.Counter((e.data.get('tool'),e.data.get('out')) for e in failures)
     return {'model_requests':sum(e.kind=='model/request' for e in events),
             'tool_calls':len(calls),'tool_failures':len(failures),
+            'tool_error_rate':len(failures)/len(calls) if calls else None,
+            'recovery_resumes':sum(e.kind=='run/started' and bool(e.data.get('recovered')) for e in events),
+            'protocol_recovery_note':'Missing tool results denote unknown execution, never permission to replay',
             'max_identical_failure_count':max(counts.values(),default=0),
             'review_starts':len(reviews),'review_unique_digests':len({e.data.get('digest') for e in reviews}),
             'input_tokens_sum':sum(e.data.get('in_tokens',0) for e in requests),
@@ -153,9 +158,22 @@ def grade(task, workspace, grade_root):
         from .knowledge import KnowledgeBase,database_root
         try:
             value=json.loads(source.read_text(encoding='utf-8'))
-            reference=value['source'];kb=KnowledgeBase(database_root(root))
-            chunk=kb.read_chunk(reference.removeprefix('kb:'))
-            return value['hotel_limit']==spec.get('expected_limit',680) and value['currency']=='CNY' and reference.startswith('kb:') and chunk['name']=='current.txt','amount, current source and existing citation assertions'
+            reference=value['source']
+            if not isinstance(reference,str) or not reference.startswith('kb:'):
+                return False,'missing kb citation prefix'
+            # Benchmark fixtures belong only to this trial's project library.
+            # Resolve through the runtime's scope parser, never strip arbitrary scopes.
+            from types import SimpleNamespace
+            from .knowledge_scopes import ScopedKnowledge
+            kb=ScopedKnowledge(SimpleNamespace(knowledge_sources=[dict(
+                id='project',label='benchmark project',root=str(database_root(root)))]))
+            chunk=kb.read_chunk(reference[3:])
+            import hashlib
+            expected_hash=hashlib.sha256(spec['knowledge']['current.txt'].encode('utf-8')).hexdigest()
+            passed=(type(value['hotel_limit']) is int and value['hotel_limit']==spec.get('expected_limit',680)
+                    and value['currency']=='CNY' and chunk['name']=='current.txt'
+                    and chunk['sha256']==expected_hash)
+            return passed,'amount, permitted scope, active citation and original source hash assertions'
         except (KeyError,ValueError,TypeError):return False,'incorrect value or invalid citation'
     if task=='browser_counter':
         from .browser_tools import BrowserSession

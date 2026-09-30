@@ -9,6 +9,9 @@ from .workspace import WorkspaceError
 class ToolRuntime:
     def _execute_tool(self, name, args, tool, call_id, it, emit):
         call_ok=True;ok=False;out='[被阻止] 持久化失败，未执行工具'
+        before = None
+        tree_before = None
+        track = name in ('write_file', 'edit_file', 'append_file', 'delete_file')
         try:
             self.session.append(
                 "tool/call", tool=name, destructive=tool.destructive,
@@ -47,6 +50,15 @@ class ToolRuntime:
                     guards.check(ToolRequest(name, tool.destructive,
                                              name in ('run_shell', 'start_process'),
                                              getattr(tool, 'network', False)), args)
+                if track:
+                    from .file_changes import capture
+                    before = capture(self.ws, str(args.get('path', '')))
+                elif name in ('run_shell', 'request_execution', 'run_approved_command'):
+                    from .file_changes import capture_tree
+                    try:
+                        tree_before = capture_tree(self.ws)
+                    except OSError:
+                        tree_before = None
                 out = invoke_checked(name, args, tool.parameters, tool.fn,
                                      effective_policy(self), writes=tool.destructive,
                                      shell=name in ('run_shell', 'start_process'),
@@ -73,6 +85,21 @@ class ToolRuntime:
         if call_ok and not ok:
             from .permission_recovery import guidance
             out = str(out) + guidance(self, name, out)
+        if track and call_ok and ok:
+            from .file_changes import capture, difference
+            path = str(args.get('path', ''))
+            diff = difference(path, before, capture(self.ws, path))
+            if diff:
+                emit(LoopStep(it, 'diff', '文件变更 · ' + path, diff))
+        if tree_before is not None:
+            from .file_changes import capture_tree, tree_diff
+            try:
+                for path, diff in tree_diff(tree_before, capture_tree(self.ws)):
+                    emit(LoopStep(it, 'diff', '文件变更 · ' + path, diff))
+            except OSError:
+                pass
+            emit(LoopStep(it, 'observe', '文件对比范围',
+                '记录命令前后观察到的文本变化，不是撤销快照，也不能区分并发外部修改。最多 400 项 / 2 MB；隐藏、二进制、大文件、链接和工作区外文件未覆盖。'))
         return out,ok,call_ok
 
     def _prepare_tool_batch(self, tool_calls, messages, it, emit, over_budget_steps):

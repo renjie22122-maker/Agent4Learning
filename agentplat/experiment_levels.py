@@ -63,7 +63,7 @@ from agentlab.util import (
 )
 
 from .guard import CostGuard, estimate_run
-from .llm import OpenAIChatClient
+from .model_client import create_client
 from .llmconfig import LLMConfig
 
 # --------------------------------------------------------------------------
@@ -205,7 +205,7 @@ def run_level(
     level_cfg.reasoning_effort = lvl.effort
     # 自一致性需要多样性，否则 3 次采样得到同一个答案，投票毫无意义
     level_cfg.temperature = 0.7 if lvl.samples > 1 else cfg.temperature
-    client = OpenAIChatClient(level_cfg)
+    client = create_client(level_cfg)
     model = cfg.tier_map().get(lvl.tier, cfg.model)
     if not model:
         raise SystemExit(

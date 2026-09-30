@@ -11,6 +11,8 @@ const {chromium}=require('playwright');
  let browser;
  try {
   browser=await chromium.launch({headless:true,channel:'msedge'});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // Exercise Chinese controls explicitly; test_ui_language_browser covers English default.
+  await page.addInitScript(()=>localStorage.setItem('agent-ui-language','zh'));
   const base='http://127.0.0.1:'+server.address().port;await page.goto(base);
   await page.locator('#native-folders').click();await page.waitForFunction(()=>document.querySelectorAll('.project-folder').length===2);
   assert.equal(await page.locator('#project-paths').inputValue(),'D:\\app\nD:\\docs');

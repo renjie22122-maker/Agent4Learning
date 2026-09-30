@@ -13,13 +13,9 @@ def inventory(root):
         return {f'@{alias}/{name}': value for alias, folder in root.items()
                 for name, value in inventory(folder).items()}
     out = {}
-    for folder, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = [d for d in dirs if d not in IGNORED and not (Path(folder) / d).is_symlink()]
-        for name in files:
-            path = Path(folder) / name
-            if path.is_symlink():
-                raise ValueError('隔离合并不支持符号链接')
-            out[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    from .filesystem_contract import walk_files
+    for path in walk_files(root, IGNORED):
+        out[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     return out
 
 

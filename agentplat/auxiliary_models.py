@@ -1,14 +1,14 @@
 """Metered optional model calls for query expansion and image inspection."""
 from dataclasses import replace
 import json
-from .llm import OpenAIChatClient
+from .model_client import create_client
 from agentlab.providers import ChatMessage
 
 
 def complete(agent, messages, max_tokens=1200):
     if agent.guard and agent.guard.tripped(): raise RuntimeError('模型调用预算已耗尽')
     cfg = replace(agent.cfg, max_tokens=max_tokens, stream_tools=True, json_mode=False)
-    client = OpenAIChatClient(cfg); client.cancel_event = agent.stop_flag
+    client = create_client(cfg); client.cancel_event = agent.stop_flag
     text, calls, usage = client.complete_with_tools(cfg.model_or('mid') or cfg.model, messages, [], cfg.timeout_s)
     from .billing import record as record_usage
     billing = record_usage(cfg, usage, agent.guard, client=client, tag='auxiliary-model')

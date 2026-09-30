@@ -8,6 +8,44 @@ def parser():
     from markdown_it import MarkdownIt
     md = MarkdownIt('commonmark', {'html': False, 'linkify': False, 'breaks': True})
     md.enable('table').enable('strikethrough')
+    def math_inline(state, silent):
+        pos = state.pos
+        for left, right, display in [('$$','$$',True), ('\\[','\\]',True), ('\\(','\\)',False), ('$','$',False)]:
+            if not state.src.startswith(left, pos):
+                continue
+            start = pos + len(left)
+            end = state.src.find(right, start)
+            if end < 0 or (left == '$' and (state.src[start:start+1].isspace() or state.src[end-1:end].isspace())):
+                return False
+            if not silent:
+                token = state.push('math_source', '', 0)
+                token.content = state.src[start:end]
+                token.meta = {'display':display}
+            state.pos = end + len(right)
+            return True
+        return False
+    def math_block(state, start, end, silent):
+        line = state.src[state.bMarks[start]+state.tShift[start]:state.eMarks[start]].strip()
+        if line not in ('$$', '\\['):
+            return False
+        closing = '$$' if line == '$$' else '\\]'
+        stop = start + 1
+        while stop < end and state.src[state.bMarks[stop]:state.eMarks[stop]].strip() != closing:
+            stop += 1
+        if stop == end:
+            return False
+        if not silent:
+            token = state.push('math_source', '', 0)
+            token.content = state.getLines(start+1, stop, 0, False)
+            token.meta = {'display':True}
+            state.line = stop + 1
+        return True
+    def math_render(tokens, idx, options, env):
+        token=tokens[idx]
+        return '<span class="math-source" data-display="'+str(bool(token.meta.get('display'))).lower()+'">'+html.escape(token.content)+'</span>'
+    md.inline.ruler.before('escape', 'math_source', math_inline)
+    md.block.ruler.before('fence', 'math_source', math_block)
+    md.renderer.rules['math_source'] = math_render
     # Remote images can leak browsing metadata; show their alt text instead.
     def image(tokens, idx, options, env):
         return '<span class="image-reference">[图片：' + html.escape(tokens[idx].content) + ']</span>'

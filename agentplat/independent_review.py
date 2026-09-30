@@ -167,27 +167,46 @@ def check(agent):
         if stale:
             agent._independent_review = {'agent_id':stale[0]['agent_id'], 'digest':'superseded', 'task':''}
             return ReflectionVerdict(False,'正在等待旧验收取消完成，随后按新要求验收。','独立验收等待')
-        task = ('你是独立验收者。只根据以下用户要求及工作区实际内容验证，不接收作者自评。'
-                '先用 verification_environment 查看可用工具，report_verification_progress 记录一个围绕本次变更的有限验收计划。'
-                '完成计划中的检查即可提交结论，不要无限增加测试面。网页 UI 优先用 browser_preview、browser_click、browser_check 在真实浏览器验证。'
-                '缺少运行环境时，先核实本次环境；沙箱缺包或路径拒绝不能证明宿主软件损坏。必要检查可通过 request_execution 申请用户新的单次宿主授权，在本验收副本中执行；不得复用作者授权，不得自动安装或重放结果未知的命令。工具不可用或用户拒绝时报告 blocked，不得自制解释器、模拟语言运行时或重写项目来代替实际执行。'
-                '先阅读实现，再独立编写边界/反例测试并运行。不得修复交付代码；测试只写在你的副本中。'
-                '涉及知识库时必须通过 list_knowledge、search_knowledge、read_knowledge_chunk 直接读取宿主快照；作者转录的资料不能替代来源核对。'
-                '优先检查本次变更和必要依赖，不要遍历无关项目、日志或缓存。尽早运行一个最小测试，避免先写庞大测试套。'
-                '发现一个确定反例后立即报告，不需要继续扩充测试套。优先使用标准库直接运行一个测试脚本。'
-                '测试生成物必须写入 create_verification_scratch 返回的新目录或脚本自行创建的临时目录；不能覆盖任何已有交付文件（包括已有测试样例）。'
-                '若作者测试重写固定路径的已有文件，应报告具体路径并要求测试隔离，不得自行修复或宣称无条件通过。'
-                '验收计划从本任务实际要求、产物承诺和输入范围推导：每项关键承诺对应可观察结果、独立检查与失败条件；只选择适用于该任务的边界反例，不套用其他领域的检查模板。'
-                '作者测试通过只是线索；重复不同入口运行同一组断言不等于独立覆盖。优先核对关键承诺与尚未验证的风险，不用大量重复样本扩大验收。'
-                '发现缺陷应拒绝验收；测试不能运行时不得通过。最后调用 finish，summary 必须是纯 JSON：'
-                '{"verdict":"pass/fail/blocked/inconclusive","findings":["具体证据"],"tests":["实际执行的检查"],"reason":"受阻或不确定的原因"}。'
-                '来源快照 missing 是平台证据不足，应报告 blocked，不应认定作者没有原文。不要把 PATH 查不到工具当作宿主无硬件。'
-                'pass 时 findings 必须是空数组，正面观察和通过的证据写入 tests；fail 时 findings 写具体缺陷。报告受阻不要求成功执行命令，不等于交付有缺陷。\n用户要求：\n' + task_text
-                + '\n本次变更路径（只作定位线索，不是正确性证据）：\n' + json.dumps(getattr(agent, '_files_touched', []), ensure_ascii=False))
+        from .review_contract import INSTRUCTIONS
+        task = (
+            'You are an independent reviewer. Verify the user requirements against actual artifacts, '
+            'not the author self-assessment. Use verification_environment to inspect available tools '
+            'and report_verification_progress to record a finite plan focused on this change. '
+            'For web UI, prefer browser_preview, browser_click and browser_check in a real browser. '
+            'A missing sandbox package or denied path does not prove host software is damaged. '
+            'For a necessary check, request_execution may request fresh, single-use host approval '
+            'for this review copy. Never reuse author approval, install automatically, or replay '
+            'commands with unknown effects. If tools are unavailable or approval is denied, report blocked. '
+            'Do not emulate a runtime, rewrite the project, or modify delivered code to replace a real check. '
+            'Read relevant implementation and independently construct boundary/counterexample tests. '
+            'For knowledge claims, use list_knowledge, search_knowledge and read_knowledge_chunk '
+            'against the selected host snapshot. Missing source snapshots are platform evidence gaps, '
+            'not proof that the author lacked the source. PATH absence is not proof of absent host hardware. '
+            'Inspect relevant changes and dependencies only; avoid unrelated projects, logs and caches. '
+            'Prefer a small standard-library test early. Report a confirmed defect promptly. '
+            'Put generated tests in create_verification_scratch or a new temporary directory. '
+            'Never overwrite existing delivery files, including test fixtures. If author tests overwrite '
+            'fixed existing paths, report those paths and require isolation rather than fixing them yourself. '
+            'Repeatedly running the same assertions through different runners is not independent coverage. '
+            'Derive checks from requirements, artifact promises and the input domain, not an unrelated template. '
+            + INSTRUCTIONS +
+            ' Finish by calling finish with summary containing only JSON: '
+            '{"verdict":"pass/fail/blocked/inconclusive","findings":[],"tests":[],"reason":""}. '
+            'For pass, findings must be empty; record successful observations in tests. '
+            'For fail, findings must identify concrete defects. An unavailable necessary check cannot pass; '
+            'blocked does not require a successful command and does not mean the deliverable is defective. '
+            '\nUser requirements:\n' + task_text +
+            '\nChanged paths (navigation hints, not correctness evidence):\n' +
+            json.dumps(getattr(agent, '_files_touched', []), ensure_ascii=False))
         if previous and previous.get('status') == 'completed':
-            task += '\n宿主保存的上次独立验收结论（非作者自评）：\n' + previous.get('summary','')[:6000] + '\n这是修复复验：优先复现上次反例并验证修复，再运行必要回归；不要从头重建整套测试。'
+            task += ('\nPrevious host-stored independent verdict (not author self-assessment):\n' +
+                     previous.get('summary', '')[:6000] +
+                     '\nThis is a repair review: reproduce the prior counterexample and verify the fix, '
+                     'then run necessary regressions. Do not rebuild the entire suite.')
         if getattr(agent.ws, 'general_chat', False):
-            task += '\n本次是未绑定项目的普通对话。纯文本产物用 check_file_text 按原始需求构造预期值并逐字断言，可形成有效证据；不需要 shell 或浏览器。不得把文本断言当作代码行为测试。'
+            task += ('\nThis is a projectless conversation. For text artifacts, check_file_text can '
+                     'assert expected content derived from the original requirements. Shell/browser '
+                     'execution is not required for text assertions, which do not validate code behavior.')
         try:
             identifier = manager.spawn(task, mode='isolated', token_budget=budget, purpose='verification',
                                        source_paths=list(getattr(agent, '_files_touched', [])))

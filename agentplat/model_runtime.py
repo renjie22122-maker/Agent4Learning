@@ -8,26 +8,20 @@ class ModelRuntime:
         import json
         host = urlsplit(self.cfg.base_url).hostname or ''
         general = getattr(self.ws, 'general_chat', False)
-        host_context = '[宿主当前请求信息] ' + json.dumps({
+        host_context = '[Current host request] ' + json.dumps({
             'requested_model': model, 'api_host': host,
-            'conversation_mode': '普通对话（未绑定项目）' if general else '项目任务',
-        }, ensure_ascii=False) + '。这是宿主实际请求配置，可直接回答型号问题，无需执行命令或探测环境变量；网关别名不能证明底层真实型号。'
+            'conversation_mode': 'general chat (no project)' if general else 'project task',
+        }, ensure_ascii=False) + '. This is the actual host request configuration. Answer model-identity questions from these fields without commands or environment-variable probes. A gateway alias does not establish the underlying model identity.'
         request_messages = list(messages)
         prefix = 0
         while prefix < len(request_messages) and request_messages[prefix].role == 'system':
             prefix += 1
         request_messages.insert(prefix, ChatMessage('system', host_context))
         if not getattr(self, 'verification_task', False):
-            request_messages.insert(prefix + 1, ChatMessage('system',
-                '成果交付规范（适用于所有任务，不改变工具权限或验收要求）：按任务需要正常读写工作区、运行测试、委派和验收。'
-                '最终回复和 finish.summary 应是给用户直接使用的交付内容，而不是对工作过程的总结。'
-                '用户要代码时，先提供可复制的核心实现；写到工作区并不代替在回复中展示所需代码。'
-                '大型项目无需贴全仓库，但应给准确文件位置、关键实现和使用方式；报告、计算、建议等任务则先呈现结论或实际产物。'
-                '随后给必要解释；验证情况通常简述即可，不能让验收任务 ID、证据清单或排查过程淹没成果。'
-                '不要只回复“已实现/已保存/已通过测试”，让用户还得追问成果。除非用户要求，勿贴全部测试脚本或重复进度总结。'
-                '输入保证不自动变成额外防御性校验要求。不得把未执行的测试说成通过，也不得隐去影响成果使用的失败或限制。'))
+            from .system_prompts import DELIVERY
+            request_messages.insert(prefix + 1, ChatMessage('system', DELIVERY))
         if general:
-            excluded = {'run_shell','start_process','spawn_agent','plan_team','request_execution','request_host_command','run_approved_command','create_git_worktree'}
+            excluded = {'run_shell','start_process','spawn_agent','plan_team','request_execution','request_host_command','run_approved_command','create_git_worktree','plan_development_environment','prepare_development_environment'}
             tool_schema = [s for s in tool_schema if s.get('function', {}).get('name') not in excluded]
         with tracer.span(f"llm_turn_{it}") as sp:
             emit(LoopStep(it, "think", "正在等待模型响应",

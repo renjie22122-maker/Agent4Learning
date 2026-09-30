@@ -56,7 +56,8 @@ class RuntimeContracts(unittest.TestCase):
             agent._independent_review = dict(passed=True,agent_id='review-1',task='task',
                                             digest=workspace_digest(Path(td)),tests=['external assertion'])
             result = LoopResult(True); agent._finalize_delivery(result, '验收 not_started')
-            self.assertTrue(result.summary.startswith('**宿主最终验收：通过**'))
+            self.assertEqual(result.summary, '验收 not_started')
+            self.assertEqual(result.acceptance['status'], 'passed')
             self.assertEqual(result.author_summary, '验收 not_started')
             self.assertEqual(events[0][0][0], 'delivery/finalized')
             (Path(td)/'changed').write_text('new')
